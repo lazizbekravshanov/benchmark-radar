@@ -601,7 +601,20 @@ def test_new_benchmarks_do_not_reuse_an_existing_benchmarks_alias():
         for spelling in spellings:
             claimed.setdefault(spelling.strip().lower(), set()).add(str(benchmark["id"]))
 
-    for spelling in ("healthbench professional", "frontiercode", "vibench"):
+    # "vbench" is the one that matters here: the registry already carries
+    # MVbench, LVBench and JointAVBench, and a lowercased substring match
+    # would have made the video-generation suite indistinguishable from the
+    # video-understanding benchmarks it is unrelated to.
+    for spelling in (
+        "healthbench professional",
+        "frontiercode",
+        "vibench",
+        "vbench",
+        "vbench++",
+        "vbench-2.0",
+        "evaluation agent",
+        "uni-mmmu",
+    ):
         assert len(claimed.get(spelling, set())) == 1, (
             f"{spelling!r} resolves to more than one benchmark id"
         )

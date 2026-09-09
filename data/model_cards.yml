@@ -1218,6 +1218,70 @@ benchmarks:
       arXiv proofs with planted errors; tests whether a model catches a broken
       argument instead of reproducing it.
 
+  # Visual-generation evaluation, requested by the VBench authors in issue #583.
+  # No `released` date is recorded for any of these: the registry treats that
+  # field as the benchmark's own publication date, and the arXiv listings that
+  # carry a day-precise one were not reachable when these were curated. A
+  # repository creation date is a different fact -- Evaluation Agent's repo
+  # predates its paper by two months -- so using one would put a date on the
+  # timeline that no source states.
+
+  - id: vbench
+    name: VBench
+    aliases: ["VBench"]
+    domain: video_generation
+    url: https://github.com/Vchitect/VBench
+    caveat: >-
+      Sixteen dimensions folded into a Quality Score and a Semantic Score and
+      then into one Total Score. Every dimension is min-max normalized across
+      the models on the leaderboard at the time, so a total states a model's
+      standing within that pool rather than an absolute rate, and two totals
+      read from different leaderboard revisions are not the same measurement.
+
+  - id: vbench_plus_plus
+    name: VBench++
+    aliases: ["VBench++", "VBench-plus-plus"]
+    domain: video_generation
+    url: https://arxiv.org/abs/2411.13503
+    caveat: >-
+      Extends VBench to image-to-video generation and adds trustworthiness
+      dimensions, so its totals are computed over a different dimension set.
+      A VBench++ number is not a VBench number for the same model.
+
+  - id: vbench_2_0
+    name: VBench-2.0
+    aliases: ["VBench-2.0", "VBench 2.0", "VBench2.0"]
+    domain: video_generation
+    url: https://arxiv.org/abs/2503.21755
+    caveat: >-
+      Targets intrinsic faithfulness -- physics, commonsense and anatomy --
+      rather than the surface quality VBench 1.x measures, and is built to stay
+      unsaturated where that suite tops out. Low scores here do not contradict
+      high VBench scores; the two suites ask different questions.
+
+  - id: evaluation_agent
+    name: Evaluation Agent
+    aliases: ["Evaluation Agent", "Evaluation-Agent"]
+    domain: visual_generation
+    url: https://github.com/Vchitect/Evaluation-Agent
+    caveat: >-
+      A promptable evaluation framework rather than a fixed test set: it plans
+      its own queries per model, so two runs need not ask the same questions.
+      Its output is an explanation of where a model fails, which is not a
+      figure that can be ranked against another model's.
+
+  - id: uni_mmmu
+    name: Uni-MMMU
+    aliases: ["Uni-MMMU", "UniMMMU"]
+    domain: multimodal
+    url: https://github.com/Vchitect/Uni-MMMU
+    caveat: >-
+      Eight tasks that couple understanding and generation, each scored on a
+      text channel and an image channel. One headline number hides which
+      channel earned it, and a model that only understands or only generates
+      is structurally capped on tasks that require both.
+
+
 # Model cards, technical reports and release posts.
 #
 # `organization` is the publisher of the document. `benchmarks` is the set of
@@ -1232,6 +1296,16 @@ source_documents:
     url: https://apodexai.github.io/FrontierAgent/benchmarks/FrontierChallenge/
     benchmarks: [frontier_challenge]
     retrieved_at: 2026-09-02
+  # The benchmark's own leaderboard, so it registers as evidence without
+  # counting as vendor adoption: nobody shipping a model chose to report
+  # VBench by publishing this page.
+  - id: vbench_leaderboard
+    name: VBench Leaderboard
+    publisher: Vchitect
+    document_type: benchmark_leaderboard
+    url: https://huggingface.co/spaces/Vchitect/VBench_Leaderboard
+    benchmarks: [vbench]
+    retrieved_at: 2026-09-09
 
 model_cards:
   - id: openai_gpt_5_system_card

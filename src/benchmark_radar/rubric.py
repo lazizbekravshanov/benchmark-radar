@@ -49,6 +49,7 @@ EVIDENCE_PRIMARY_SOURCES = (
     "Semantic Scholar",
     "Crossref",
     "DataCite",
+    "OpenAIRE",
 )
 EVIDENCE_PRIMARY_CREDIT = 40.0
 EVIDENCE_ARTIFACT_SOURCES = (

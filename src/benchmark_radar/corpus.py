@@ -29,6 +29,7 @@ PRIMARY_SOURCE_RANK = {
     "OpenAlex": 2,
     "Crossref": 2,
     "DataCite": 2,
+    "OpenAIRE": 2,
     "Brave Search": 3,
 }
 # Derived from the rubric rather than restated, which had let the two lists

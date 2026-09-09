@@ -1277,6 +1277,42 @@ def test_simulate_backfill_places_a_datacite_doi_on_its_registration_day(monkeyp
     assert [item_.source_id for item_ in edit_day.items] == []
 
 
+def test_simulate_backfill_places_an_openaire_product_on_its_publication_day(monkeypatch):
+    """A product must land on the day a live run would have collected it.
+
+    `fetch_openaire` decides membership on `publicationDate`, while this
+    function places an item by `updated_at or published_at`. The row also
+    carries `dateOfCollection`, the day OpenAIRE indexed the product, which is
+    routinely months later; dating the record by it would hide the product on
+    its publication day and surface it on a day the connector's own window
+    guard rejects. The real connector runs here so both halves of that
+    contract are checked against each other.
+    """
+    monkeypatch.setattr(
+        "benchmark_radar.sources.get_json",
+        lambda url, **kwargs: {
+            "header": {"numFound": 1},
+            "results": [
+                {
+                    "id": "openaire____::radar99001",
+                    "mainTitle": "A Federated Benchmark Dataset",
+                    "publicationDate": "2026-07-05",
+                    "dateOfCollection": "2026-07-20T00:00:00Z",
+                    "pids": [{"scheme": "doi", "value": "10.5281/zenodo.99001"}],
+                }
+            ],
+        },
+    )
+    config = _backfill_config()
+    config["sources"]["openaire"] = {"enabled": True, "searches": ["benchmark"]}
+    dates = [datetime(2026, 7, 5, 12, tzinfo=UTC), datetime(2026, 7, 20, 12, tzinfo=UTC)]
+
+    publication_day, collection_day = simulate_backfill(config, dates)
+
+    assert [item_.source_id for item_ in publication_day.items] == ["openaire____::radar99001"]
+    assert [item_.source_id for item_ in collection_day.items] == []
+
+
 def test_simulate_backfill_marks_arxiv_as_a_known_limitation(monkeypatch):
     monkeypatch.setitem(
         __import__("benchmark_radar.pipeline", fromlist=["SOURCE_FETCHERS"]).SOURCE_FETCHERS,

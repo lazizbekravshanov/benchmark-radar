@@ -657,6 +657,7 @@ BACKFILL_SOURCES = {
     "semantic_scholar",
     "crossref",
     "datacite",
+    "openaire",
 }
 
 

@@ -1013,6 +1013,224 @@ def fetch_crossref(
     return sorted(found.values(), key=lambda item: item.published_at, reverse=True)[:limit]
 
 
+DATACITE_API_URL = "https://api.datacite.org/dois"
+
+
+def _datacite_query_time(value: datetime) -> str:
+    """Render one bound of the `registered:[a TO b]` range the API is asked for.
+
+    Second precision in UTC with an explicit `Z`, the resolution DataCite
+    records `registered` at. A bare date would hand the bound to the index's
+    day rounding and widen the window past the collection instant it is
+    supposed to mean.
+    """
+    return value.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+# Characters that change the structure of an Elasticsearch query_string.
+# `<` and `>` have no escape sequence at all, so they are dropped instead.
+_DATACITE_RESERVED = frozenset('+-=&|!(){}[]^"~*?:\\/')
+
+
+def _datacite_query_terms(search: str) -> str:
+    """Escape a configured phrase so it cannot restructure the query.
+
+    The phrase is interpolated into `titles.title:(...)`, which DataCite hands
+    to a query_string parser. An unescaped colon in a phrase such as
+    "Benchmark: agents" reads as a clause on an unmapped field and returns
+    zero rows while source health still reports the source healthy -- the
+    silent emptiness this project treats as a bug rather than a quiet gap.
+    """
+    stripped = "".join(" " if character in "<>" else character for character in search)
+    return "".join(
+        f"\\{character}" if character in _DATACITE_RESERVED else character for character in stripped
+    )
+
+
+def _datacite_rows(value: Any, field: str) -> list[dict[str, Any]]:
+    if not isinstance(value, list) or not all(isinstance(row, dict) for row in value):
+        raise ConnectorPayloadError(f"DataCite {field} must be an array of objects")
+    return value
+
+
+def _datacite_title(titles: Any) -> str:
+    """The main title: an untyped entry first, then any non-empty one.
+
+    `titles` is an array of typed objects. A `Subtitle` or `AlternativeTitle`
+    is upstream text too, but listed first it would become the record's name.
+    """
+    texts = [
+        (str(row.get("titleType") or "").strip(), str(row.get("title") or "").strip())
+        for row in _datacite_rows(titles, "titles")
+    ]
+    for title_type, text in texts:
+        if text and not title_type:
+            return text
+    return next((text for _, text in texts if text), "")
+
+
+def _datacite_description(descriptions: Any) -> str:
+    """The abstract when one is typed, otherwise the first description given."""
+    texts = [
+        (
+            str(row.get("descriptionType") or "").strip(),
+            str(row.get("description") or "").strip(),
+        )
+        for row in _datacite_rows(descriptions, "descriptions")
+    ]
+    for description_type, text in texts:
+        if text and description_type == "Abstract":
+            return text
+    return next((text for _, text in texts if text), "")
+
+
+def _datacite_creator_name(creator: dict[str, Any]) -> str:
+    """Render a creator as `Given Family`, matching the Crossref connector.
+
+    A deposit without split name parts writes a person as "Family, Given", so
+    that one shape is reordered. Only an explicitly personal name is: the
+    field is optional in the DataCite schema and absent from older deposits,
+    and treating a missing one as personal turns "University of California,
+    Berkeley" into a name that appears in no source document.
+    """
+    given = str(creator.get("givenName") or "").strip()
+    family = str(creator.get("familyName") or "").strip()
+    if family:
+        return " ".join(part for part in (given, family) if part)
+    name = str(creator.get("name") or "").strip()
+    if ", " in name and str(creator.get("nameType") or "").strip() == "Personal":
+        family, given = name.split(", ", 1)
+        return f"{given.strip()} {family.strip()}".strip()
+    return name
+
+
+def fetch_datacite(
+    config: dict[str, Any],
+    since: datetime,
+    limit: int,
+) -> list[RadarItem]:
+    """Collect DOIs that DataCite made findable inside the collection window.
+
+    Sibling of `fetch_crossref` for the other DOI registration agency (issue
+    #544): datasets, software and reports deposited with Zenodo, Figshare,
+    Dryad and institutional repositories. Reads need no credential, and an
+    anonymous request only ever sees `findable` DOIs, so a draft cannot enter
+    the feed.
+
+    The window is the `registered` timestamp, the moment the DOI started to
+    resolve, on both ends of the query and again on the parsed record. The
+    metadata `published` value is not used because it is frequently a bare
+    year, and `created` can predate registration by however long a deposit
+    sat in draft.
+    """
+    searches = [str(value).strip() for value in config.get("searches", []) if str(value).strip()]
+    budget = max(1, int(config.get("max_requests", len(searches) or 1)))
+    page_size = min(1000, max(1, int(config.get("page_size", 50))))
+    window_start = since.astimezone(UTC)
+    window = (
+        f"registered:[{_datacite_query_time(window_start)} TO "
+        f"{_datacite_query_time(_latest_allowed(config))}]"
+    )
+    found: dict[str, RadarItem] = {}
+    for search in searches[:budget]:
+        payload = get_json(
+            DATACITE_API_URL,
+            params={
+                # Title-scoped, like the Crossref connector: the description
+                # field indexes every abstract that mentions a benchmark in
+                # passing, and the shared taxonomy filters the rest downstream.
+                "query": f"titles.title:({_datacite_query_terms(search)}) AND {window}",
+                # The API cannot sort on `registered`; `-created` is the
+                # closest server-side order, and the result is re-sorted below.
+                "sort": "-created",
+                "page[size]": min(page_size, limit),
+            },
+            **_request_options(config),
+        )
+        for row in _payload_rows(payload, "data", "DataCite"):
+            attributes = row.get("attributes")
+            if not isinstance(attributes, dict):
+                raise ConnectorPayloadError("DataCite attributes must be an object")
+            doi = str(attributes.get("doi") or row.get("id") or "").strip().casefold()
+            title = _datacite_title(attributes.get("titles") or [])
+            registered = _optional_date(attributes.get("registered"))
+            if not doi or not title or registered is None:
+                continue
+            # Anonymous reads only return findable DOIs, so this guards a
+            # credentialed run: a draft or registered-only DOI does not
+            # resolve yet and must not be published as a release.
+            if str(attributes.get("state") or "findable").strip().casefold() != "findable":
+                continue
+            updated = _optional_date(attributes.get("updated"))
+            if registered < window_start or _reject_future(config, doi, registered, updated):
+                continue
+            authors: list[str] = []
+            organizations: list[str] = []
+            for creator in _datacite_rows(attributes.get("creators") or [], "creators"):
+                name = _datacite_creator_name(creator)
+                if name:
+                    authors.append(name)
+                affiliations = creator.get("affiliation") or []
+                if not isinstance(affiliations, list):
+                    raise ConnectorPayloadError("DataCite creator affiliation must be an array")
+                for affiliation in affiliations:
+                    # A string by default; an object when `affiliation=true`
+                    # is requested, which a later ROR lookup may want.
+                    if isinstance(affiliation, dict):
+                        affiliation = affiliation.get("name")
+                    elif not isinstance(affiliation, str):
+                        raise ConnectorPayloadError(
+                            "DataCite affiliation entries must be strings or objects"
+                        )
+                    text = str(affiliation or "").strip()
+                    if text:
+                        organizations.append(text)
+            doi_url = f"https://doi.org/{doi}"
+            landing_page = str(attributes.get("url") or "").strip()
+            artifact_urls = [doi_url]
+            if landing_page.startswith(("https://", "http://")) and landing_page != doi_url:
+                # The deposit's own page. The shared DOI already merges this
+                # record with the Zenodo connector's copy, so this earns its
+                # place on the deposits whose landing page is the GitHub or
+                # Hugging Face URL that `dedupe_keys` resolves exactly.
+                artifact_urls.append(landing_page)
+            found[doi] = RadarItem(
+                source="DataCite",
+                source_id=doi,
+                title=title,
+                url=doi_url,
+                published_at=registered,
+                # Recency scoring and simulated backfill both read `updated_at`
+                # (`score_item` and `simulate_backfill` in pipeline.py), so it
+                # has to name the same instant the window was tested against.
+                # DataCite stamps `updated` on every metadata edit, seconds
+                # after registration and again years later; keying on it would
+                # give a long-stale DOI a brand-new record's recency score and
+                # place it in a backfilled day this connector's own guard
+                # rejects. The deposited value stays in `raw`.
+                updated_at=registered,
+                summary=clean_card_text(
+                    _datacite_description(attributes.get("descriptions") or [])
+                ),
+                # Registration inside the window is the release event. A later
+                # metadata edit does not demote it to an update: DataCite
+                # touches `updated` seconds after registering, which would mark
+                # nearly every new DOI as an update and halve its recency.
+                event_kind="released",
+                authors=authors,
+                organizations=list(dict.fromkeys(organizations)),
+                artifact_urls=artifact_urls,
+                metrics={
+                    "citations": float(attributes.get("citationCount") or 0),
+                    "downloads": float(attributes.get("downloadCount") or 0),
+                    "views": float(attributes.get("viewCount") or 0),
+                },
+                raw=row,
+                parser_version="datacite-dois/1",
+            )
+    return sorted(found.values(), key=lambda item: item.published_at, reverse=True)[:limit]
+
+
 def fetch_openreview(
     config: dict[str, Any],
     since: datetime,
@@ -1603,6 +1821,7 @@ SOURCE_FETCHERS = {
     "kaggle_datasets": fetch_kaggle_datasets,
     "zenodo": fetch_zenodo_records,
     "crossref": fetch_crossref,
+    "datacite": fetch_datacite,
     "openreview": fetch_openreview,
     "semantic_scholar": fetch_semantic_scholar,
     "github_releases": fetch_github_releases,
@@ -1625,6 +1844,7 @@ _PARSER_VERSION_METHODS = {
     "kaggle-datasets": "API",
     "zenodo-records": "API",
     "crossref-works": "API",
+    "datacite-dois": "API",
     "openreview-api-v2": "API",
     "semantic-scholar-graph": "API",
     "github-releases": "API",
@@ -1643,6 +1863,7 @@ SOURCE_DEFAULT_METHODS = {
     "kaggle_datasets": "API",
     "zenodo": "API",
     "crossref": "API",
+    "datacite": "API",
     "openreview": "API",
     "semantic_scholar": "API",
     "github_releases": "API",

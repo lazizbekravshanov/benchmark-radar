@@ -656,6 +656,7 @@ BACKFILL_SOURCES = {
     "openreview",
     "semantic_scholar",
     "crossref",
+    "datacite",
 }
 
 

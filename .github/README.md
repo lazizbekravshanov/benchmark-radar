@@ -107,8 +107,8 @@ pytest -q
 ```
 
 Each branch was run through that sequence on its own, from a fresh worktree of upstream `main`. The
-suite holds 1,326 tests on upstream `main`; the DataCite branch takes it to 1,351 and the OpenAIRE branch
-to 1,377, while the VBench branch leaves the count at 1,326 because it extends the cases of an existing
+suite holds 1,329 tests on upstream `main`; the DataCite branch takes it to 1,354 and the OpenAIRE branch
+to 1,380, while the VBench branch leaves the count at 1,329 because it extends the cases of an existing
 test rather than adding one. One pre-existing test fails in the sandbox this work was built in, because
 it downloads a tokeniser table from a host the sandbox's network policy blocks. It fails identically on an
 untouched checkout of upstream `main` and passes on GitHub's runners.

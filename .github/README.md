@@ -16,9 +16,12 @@ conditions and citations.
 
 ## What this fork adds
 
-Two new daily-discovery connectors, one per upstream issue. Both are modelled on the existing Crossref
+Three contributions, one per upstream issue, each on its own branch with its own pull request so the
+maintainer can take any of them without the others.
+
+The first two are new daily-discovery connectors. Both are modelled on the existing Crossref
 connector, so they slot into the same pipeline, scoring and provenance rules rather than introducing a
-parallel path.
+parallel path. The third is a data change to the model-report registry with no code in it.
 
 | | DataCite | OpenAIRE |
 | --- | --- | --- |
@@ -54,6 +57,23 @@ which is treated as an ordinary empty result rather than a broken payload. A pro
 nor an instance URL names no location a reader can open, so it is dropped instead of published pointing
 at nothing.
 
+### VBench visual-generation family
+
+Upstream issue [#583](https://github.com/ktwu01/benchmark-radar/issues/583), opened by the lead of the
+VBench project after finding none of the visual-generation evaluation family in the registry. This
+registers the five benchmarks named there: VBench, VBench++, VBench-2.0, Evaluation Agent and Uni-MMMU,
+each with a caveat stating what a reader would otherwise get wrong about its numbers (for example, a
+VBench total is a standing within the leaderboard pool at the time, not an absolute rate, and VBench-2.0
+measures a different thing from 1.x so its lower scores do not contradict the older suite).
+
+No release date is recorded for any of them: the registry treats that field as the benchmark's own
+publication date, the arXiv listings carrying one were not reachable while these were curated, and a
+repository creation date is a different fact. All five carry a card count of zero, which is the honest
+reading, since the registry counts vendors choosing to report a benchmark and no vendor card does. The
+VBench leaderboard is registered as a source document so the entry carries evidence without being read
+as vendor adoption. The alias-collision test covers the new spellings, because the registry already
+holds MVbench, LVBench and JointAVBench and "VBench" is a substring of all three.
+
 ## Three rules both connectors follow
 
 **The window field and the record's date are the same field.** Recency scoring and simulated backfill
@@ -86,8 +106,10 @@ benchmark-radar build-data-release
 pytest -q
 ```
 
-The test suite grows from 1,324 tests to 1,400 across the two changes. One pre-existing test fails in
-the sandbox this work was built in, because it downloads a tokeniser table from a host the sandbox's
+Each branch was run through that sequence on its own, from a fresh worktree of upstream `main`. The
+suite holds 1,324 tests on upstream `main`; the DataCite branch takes it to 1,349 and the OpenAIRE branch
+to 1,375, while the VBench branch leaves the count at 1,324 because it extends the cases of an existing
+test rather than adding one. One pre-existing test fails in the sandbox this work was built in, because it downloads a tokeniser table from a host the sandbox's
 network policy blocks. It fails identically on an untouched checkout of upstream `main` and passes on
 GitHub's runners.
 
@@ -110,19 +132,31 @@ record merging that the connector is built around.
 
 ## Status
 
-| Work | Branch | Fork PR | Upstream PR |
-| --- | --- | --- | --- |
-| DataCite connector | `claude/benchmark-radar-contribution-8iyv4h` | [#1](https://github.com/lazizbekravshanov/benchmark-radar/pull/1) | not yet opened |
-| OpenAIRE connector | same branch | same PR | not yet opened |
+| Work | Issue | Branch | Fork PR | Upstream PR |
+| --- | --- | --- | --- | --- |
+| DataCite connector | [#544](https://github.com/ktwu01/benchmark-radar/issues/544) | `feat/issue-544-datacite-source` | [#2](https://github.com/lazizbekravshanov/benchmark-radar/pull/2) | not yet opened |
+| OpenAIRE connector | [#545](https://github.com/ktwu01/benchmark-radar/issues/545) | `feat/issue-545-openaire-source` | [#3](https://github.com/lazizbekravshanov/benchmark-radar/pull/3) | not yet opened |
+| VBench family | [#583](https://github.com/ktwu01/benchmark-radar/issues/583) | `data/issue-583-vbench-family` | [#4](https://github.com/lazizbekravshanov/benchmark-radar/pull/4) | not yet opened |
 
-The fork pull request is a staging place to read the change; it is not meant to be merged into this
-fork's `main`.
+The fork pull requests are staging places to read each change; none is meant to be merged into this
+fork's `main`. [#1](https://github.com/lazizbekravshanov/benchmark-radar/pull/1) held all three
+together and is closed in favour of the split.
+
+The two connector branches both start from the same upstream commit and both move the README source
+count from 37 to 39. Whichever merges second needs a rebase that keeps both sides of a handful of
+adjacent-insertion conflicts and writes the count as 40; that rebase is part of this fork's work, not
+the maintainer's.
 
 ## Branch layout
 
 - **`main`** — mirrors upstream, plus this note.
-- **`claude/benchmark-radar-contribution-8iyv4h`** — the contribution branch, one commit per connector.
-  This branch contains no fork-specific files.
+- **`feat/issue-544-datacite-source`** — one commit, the DataCite connector.
+- **`feat/issue-545-openaire-source`** — one commit, the OpenAIRE connector.
+- **`data/issue-583-vbench-family`** — one commit, the VBench registry entries.
+- **`claude/benchmark-radar-contribution-8iyv4h`** — the original combined branch the three above were
+  split from, kept for history.
+
+No contribution branch contains fork-specific files.
 
 ## Working on this locally
 

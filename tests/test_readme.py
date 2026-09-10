@@ -1,8 +1,13 @@
 import json
+import sys
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import quote
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+
+from export_report_figure_data import count_ingest_sources
 
 from benchmark_radar.export import write_exports
 from benchmark_radar.models import RadarItem, RadarRun
@@ -175,3 +180,16 @@ def test_consumer_skill_keeps_acceptance_with_the_agent() -> None:
     assert "remove conversational wrapper text" in text
     assert "no confident match" in text
     assert "call `show`" in text
+
+
+def test_readmes_state_the_live_ingest_source_count() -> None:
+    # Both READMEs advertise how many public sources the radar collects from.
+    # The number was typed into the prose and had nothing holding it to the
+    # registry, so adding a feed to config.yml or a fetcher to sources.py left
+    # the claim stale. Derive it from the same helper the technical report's
+    # figure data uses, so the two never disagree.
+    connectors, feeds = count_ingest_sources(Path.cwd())
+    total = connectors + feeds
+
+    assert f"from {total} public sources every day" in README.read_text(encoding="utf-8")
+    assert f"每天从 {total} 个公开来源采集" in README_ZH.read_text(encoding="utf-8")

@@ -100,3 +100,7 @@ graphify-out/
 # CLI clients. Pages rebuilds it from the committed snapshots and crawl inputs;
 # committing it would review a binary derivation instead of its sources.
 /site/data/cli/
+# Local scratch for tool session handles, currently the codex CLI's resume id.
+# The id is meaningful only to the machine that created it, so committing one
+# would hand every clone a stale pointer to someone else's session.
+/.context/

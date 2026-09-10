@@ -4,10 +4,13 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import hashlib
 import json
 from collections import Counter
 from pathlib import Path
+
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = Path("docs/technical-report/latex/figure-data.tex")
@@ -27,6 +30,29 @@ def tex_escape(value: str) -> str:
         "^": r"\textasciicircum{}",
     }
     return "".join(escapes.get(char, char) for char in value)
+
+
+def count_ingest_sources(root: Path) -> tuple[int, int]:
+    """Count the discovery ingest surface: direct connectors plus first-party feeds.
+
+    The connector inventory lives in code and config rather than in the exported
+    JSON, so it is read from the definitions themselves. `fetch_first_party_feeds`
+    is a loop over the configured allowlist, not a source of its own, so it is
+    excluded in favour of the individual feeds it fetches.
+    """
+    module = ast.parse((root / "src/benchmark_radar/sources.py").read_text(encoding="utf-8"))
+    connectors = {
+        node.name
+        for node in module.body
+        if isinstance(node, ast.FunctionDef) and node.name.startswith("fetch_")
+    }
+    connectors.discard("fetch_first_party_feeds")
+
+    config = yaml.safe_load((root / "config.yml").read_text(encoding="utf-8"))
+    feeds = (config.get("sources") or {}).get("first_party_feeds", {}).get("feeds") or []
+    if not connectors or not feeds:
+        raise ValueError("Could not resolve the discovery ingest surface")
+    return len(connectors), len(feeds)
 
 
 def render_data(root: Path) -> str:
@@ -53,6 +79,7 @@ def render_data(root: Path) -> str:
     if sum(value for _, value in bars) != len(observations) or not bars:
         raise ValueError("Source bars must account for the entire discovery corpus")
     artifacts = sum(entity["type"] == "artifact" for entity in corpus["entities"])
+    connector_count, feed_count = count_ingest_sources(root)
     values = {
         "ReportDataCutoff": radar["latest_date"],
         "ReportObservationCount": len(observations),
@@ -60,6 +87,9 @@ def render_data(root: Path) -> str:
         "ReportSnapshotCount": radar["snapshot_count"],
         "ReportCatalogCount": len(records),
         "ReportCatalogSourceCount": len(sources),
+        "ReportConnectorCount": connector_count,
+        "ReportFirstPartyFeedCount": feed_count,
+        "ReportIngestSourceCount": connector_count + feed_count,
         "ReportLLMStatsCount": sources["llm_stats"],
         "ReportOpenCompassCount": sources["opencompass_hub"],
         "ReportArtificialAnalysisCount": sources["artificial_analysis"],

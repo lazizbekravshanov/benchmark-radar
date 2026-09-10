@@ -16,12 +16,13 @@ conditions and citations.
 
 ## What this fork adds
 
-Three contributions, one per upstream issue, each on its own branch with its own pull request so the
+Four contributions, one per upstream issue, each on its own branch with its own pull request so the
 maintainer can take any of them without the others.
 
 The first two are new daily-discovery connectors. Both are modelled on the existing Crossref
 connector, so they slot into the same pipeline, scoring and provenance rules rather than introducing a
-parallel path. The third is a data change to the model-report registry with no code in it.
+parallel path. The third is a data change to the model-report registry with no code in it. The fourth
+is the collector behind the "Latest releases" leaderboard, which had a ranking engine but no data.
 
 | | DataCite | OpenAIRE |
 | --- | --- | --- |
@@ -73,6 +74,24 @@ reading, since the registry counts vendors choosing to report a benchmark and no
 VBench leaderboard is registered as a source document so the entry carries evidence without being read
 as vendor adoption. The alias-collision test covers the new spellings, because the registry already
 holds MVbench, LVBench and JointAVBench and "VBench" is a substring of all three.
+
+### Benchmark attention collector
+
+Upstream issue [#530](https://github.com/ktwu01/benchmark-radar/issues/530), with
+[#589](https://github.com/ktwu01/benchmark-radar/issues/589) as its symptom. The "Latest releases"
+leaderboard ranks a release by GitHub stars, Hugging Face paper upvotes and Hugging Face dataset
+downloads, read from a `benchmark_attention` block in each daily snapshot. The ranking engine, the
+block's validator and their tests all existed; nothing produced the block, so after a clean build the
+30-day window held one entry with every signal unknown. The collector reads the exact resource for each
+signal (a dedicated repository, a paper page, a dataset page) for every release inside the 90-day
+window, newest first under a per-source request budget, and stops asking a source after five failures
+in a row. A resource the API reports as gone is recorded as unavailable with no value, never as zero. A
+request that fails for a reason about the request writes the previous snapshot's reading again as
+stale, dated by the day it was actually read, because the ranking reports whatever the newest
+observation says and writing nothing would leave yesterday's reading reported as fresh. Health is per
+metric and stays healthy while any request succeeded, because the ranking demotes fresh readings to
+stale on a failed health event at the same instant. The leaderboard's default view is a separate,
+UI-only follow-up.
 
 ## Three rules both connectors follow
 
@@ -137,6 +156,7 @@ record merging that the connector is built around.
 | DataCite connector | [#544](https://github.com/ktwu01/benchmark-radar/issues/544) | `feat/issue-544-datacite-source` | [#2](https://github.com/lazizbekravshanov/benchmark-radar/pull/2) | not yet opened |
 | OpenAIRE connector | [#545](https://github.com/ktwu01/benchmark-radar/issues/545) | `feat/issue-545-openaire-source` | [#3](https://github.com/lazizbekravshanov/benchmark-radar/pull/3) | not yet opened |
 | VBench family | [#583](https://github.com/ktwu01/benchmark-radar/issues/583) | `data/issue-583-vbench-family` | [#4](https://github.com/lazizbekravshanov/benchmark-radar/pull/4) | not yet opened |
+| Attention collector | [#530](https://github.com/ktwu01/benchmark-radar/issues/530) | `feat/issue-530-benchmark-attention` | [#5](https://github.com/lazizbekravshanov/benchmark-radar/pull/5) | not yet opened |
 
 The fork pull requests are staging places to read each change; none is meant to be merged into this
 fork's `main`. [#1](https://github.com/lazizbekravshanov/benchmark-radar/pull/1) held all three
@@ -154,6 +174,7 @@ the maintainer's.
 - **`feat/issue-544-datacite-source`** — one commit, the DataCite connector.
 - **`feat/issue-545-openaire-source`** — one commit, the OpenAIRE connector.
 - **`data/issue-583-vbench-family`** — one commit, the VBench registry entries.
+- **`feat/issue-530-benchmark-attention`** — one commit, the attention collector and its wiring.
 - **`claude/benchmark-radar-contribution-8iyv4h`** — the original combined branch the three above were
   split from, kept for history.
 

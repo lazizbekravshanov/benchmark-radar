@@ -107,8 +107,8 @@ pytest -q
 ```
 
 Each branch was run through that sequence on its own, from a fresh worktree of upstream `main`. The
-suite holds 1,324 tests on upstream `main`; the DataCite branch takes it to 1,349 and the OpenAIRE branch
-to 1,375, while the VBench branch leaves the count at 1,324 because it extends the cases of an existing
+suite holds __BASE__ tests on upstream `main`; the DataCite branch takes it to __N544__ and the OpenAIRE branch
+to __N545__, while the VBench branch leaves the count at __BASE__ because it extends the cases of an existing
 test rather than adding one. One pre-existing test fails in the sandbox this work was built in, because it downloads a tokeniser table from a host the sandbox's
 network policy blocks. It fails identically on an untouched checkout of upstream `main` and passes on
 GitHub's runners.
@@ -143,8 +143,9 @@ fork's `main`. [#1](https://github.com/lazizbekravshanov/benchmark-radar/pull/1)
 together and is closed in favour of the split.
 
 The two connector branches both start from the same upstream commit and both move the README source
-count from 37 to 39. Whichever merges second needs a rebase that keeps both sides of a handful of
-adjacent-insertion conflicts and writes the count as 40; that rebase is part of this fork's work, not
+count from 37 to 38, the figure upstream's `count_ingest_sources` helper derives and its README test
+now enforces. Whichever merges second needs a rebase that keeps both sides of a handful of
+adjacent-insertion conflicts and writes the count as 39; that rebase is part of this fork's work, not
 the maintainer's.
 
 ## Branch layout

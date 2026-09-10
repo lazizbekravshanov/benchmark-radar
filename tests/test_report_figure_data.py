@@ -37,6 +37,28 @@ def figure_inputs(tmp_path: Path) -> Path:
         },
     }
     (data / "radar.json").write_text(json.dumps(radar))
+
+    # render_data also reads the ingest surface from the tree it is pointed at:
+    # the connector list from sources.py and the feed allowlist from config.yml.
+    package = tmp_path / "src" / "benchmark_radar"
+    package.mkdir(parents=True)
+    (package / "sources.py").write_text(
+        "def fetch_alpha():\n    pass\n\n\n"
+        "def fetch_beta():\n    pass\n\n\n"
+        # Excluded: it loops over the allowlist rather than being a source.
+        "def fetch_first_party_feeds():\n    pass\n\n\n"
+        "def helper():\n    pass\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "config.yml").write_text(
+        "sources:\n"
+        "  first_party_feeds:\n"
+        "    feeds:\n"
+        "      - name: one\n"
+        "      - name: two\n"
+        "      - name: three\n",
+        encoding="utf-8",
+    )
     return tmp_path
 
 
@@ -46,6 +68,10 @@ def test_figure_counts_include_unscored_records_and_new_sources(figure_inputs: P
     assert r"\newcommand{\ReportCatalogSourceCount}{5}" in result
     assert r"\newcommand{\ReportModelReportCount}{252}" in result
     assert r"\newcommand{\ReportArtifactCount}{1}" in result
+    # Two connectors plus three feeds; fetch_first_party_feeds is not a source.
+    assert r"\newcommand{\ReportConnectorCount}{2}" in result
+    assert r"\newcommand{\ReportFirstPartyFeedCount}{3}" in result
+    assert r"\newcommand{\ReportIngestSourceCount}{5}" in result
     assert result == render_data(figure_inputs)
 
 

@@ -48,13 +48,23 @@ def test_manuscript_embeds_use_case_figures() -> None:
         "artifact-status-paper.png",
         "artifact-status-code.png",
         "cross-validation.png",
-        "survey-table.png",
-        "manual-prior-art-table.png",
     )
 
     for name in names:
         assert name in source
         assert (LATEX / "figures" / name).is_file()
+
+
+def test_use_case_tables_are_typeset_rather_than_screenshots() -> None:
+    # The survey and prior-art comparison were once screenshots. They are now
+    # real tables, so the text is selectable and the links are live.
+    source = MANUSCRIPT.read_text(encoding="utf-8")
+
+    for label in ("tab:use-case-survey", "tab:benchmark-comparison"):
+        assert f"\\label{{{label}}}" in source
+    for retired in ("survey-table.png", "manual-prior-art-table.png"):
+        assert retired not in source
+        assert not (LATEX / "figures" / retired).exists()
 
 
 def test_frozen_deposit_is_present_and_is_never_a_write_target() -> None:

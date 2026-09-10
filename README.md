@@ -90,10 +90,11 @@ written in the
 
 Software: [MIT License](LICENSE).
 
-Technical report and original editorial content: [CC BY-NC 4.0](LICENSE-CONTENT.md).
+Technical report and original editorial content: [CC BY-NC-SA 4.0](LICENSE-CONTENT.md).
 Commercial republication, resale, paid newsletters, dataset packaging, or
 commercial product integration requires prior written permission from Koutian
-Wu. Third-party source material remains under its original terms.
+Wu. Adaptations must be shared under the same terms. Third-party source
+material remains under its original terms.
 
 ## Join the WeChat group
 

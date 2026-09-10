@@ -107,14 +107,11 @@ pytest -q
 ```
 
 Each branch was run through that sequence on its own, from a fresh worktree of upstream `main`. The
-suite holds 1,325 tests on upstream `main`; the DataCite branch takes it to 1,350 and the OpenAIRE branch
-to 1,376, while the VBench branch leaves the count at 1,325 because it extends the cases of an existing
+suite holds 1,326 tests on upstream `main`; the DataCite branch takes it to 1,351 and the OpenAIRE branch
+to 1,377, while the VBench branch leaves the count at 1,326 because it extends the cases of an existing
 test rather than adding one. One pre-existing test fails in the sandbox this work was built in, because
-it downloads a tokeniser table from a host the sandbox's network policy blocks; it passes on GitHub's
-runners. Three more fail on upstream `main` itself at b3928b8, the commit the branches are rebased onto,
-and reproduce on an untouched checkout: two figure-data tests that the new source-count helper broke by
-reading files their fixture does not create, and one manuscript test whose expected figure the paper
-submodule no longer references. Each pull request body names them.
+it downloads a tokeniser table from a host the sandbox's network policy blocks. It fails identically on an
+untouched checkout of upstream `main` and passes on GitHub's runners.
 
 **API behaviour was established from primary sources, not from memory.** Neither vendor's API or
 documentation site was reachable from the build sandbox. DataCite's request shape was checked against

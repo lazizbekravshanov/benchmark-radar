@@ -267,7 +267,7 @@ def test_each_generated_page_marks_its_navigation_entry_current(tmp_path):
         "saturation": 'data-view="saturation"',
         "trends": 'data-view="trends"',
         "cli": 'id="cli-nav"',
-        "cite": 'id="cite-open"',
+        "cite": 'id="cite-nav"',
     }
     for path, identifying_attribute in ids.items():
         page = (tmp_path / path / "index.html").read_text(encoding="utf-8")

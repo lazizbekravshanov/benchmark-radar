@@ -480,6 +480,20 @@ button.repo-badge svg {
   background: var(--panel);
 }
 
+/* Cite is the same kind of dialog-opener as CLI: a real page path that still
+   opens the familiar panel, so it gets the same inactive-blue treatment. */
+#cite-nav:not(.nav-active) {
+  color: var(--blue-deep);
+}
+
+#cite-nav::after {
+  content: " ⓘ";
+}
+
+#cite-nav:not(.nav-active):hover {
+  background: var(--panel);
+}
+
 main {
   min-height: calc(100vh - 210px);
 }

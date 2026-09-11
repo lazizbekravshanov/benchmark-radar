@@ -1785,6 +1785,13 @@ function syncNavState() {
     if (utility === "cli") cliNav.setAttribute("aria-current", "page");
     else cliNav.removeAttribute("aria-current");
   }
+  const citeNav = byId("cite-nav");
+  if (citeNav?.classList) {
+    citeNav.classList.toggle("nav-active", utility === "cite");
+    citeNav.setAttribute("aria-expanded", String(utility === "cite"));
+    if (utility === "cite") citeNav.setAttribute("aria-current", "page");
+    else citeNav.removeAttribute("aria-current");
+  }
   const citeOpen = byId("cite-open");
   citeOpen?.setAttribute("aria-expanded", String(utility === "cite"));
   if (utility === "cite") citeOpen?.setAttribute("aria-current", "page");
@@ -8928,6 +8935,14 @@ function bindEvents() {
   // a link to a crawler and to a reader copying it out of the context menu;
   // the handler keeps the click itself on the page.
   byId("cite-open").addEventListener("click", (event) => {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    openCite();
+  });
+  // The view bar entry is an anchor to the same short link, so /cite/ reads as
+  // a link to a crawler and can be copied out of the context menu; the
+  // handler keeps the click itself on the page.
+  byId("cite-nav").addEventListener("click", (event) => {
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     event.preventDefault();
     openCite();

@@ -233,7 +233,7 @@ def _with_active_attributes(opening_tag: str) -> str:
 def _activate_navigation(document: str, page: str, *, utility: bool = False) -> str:
     """Ship an honest active navigation state before app.js runs."""
     if utility:
-        element_id = {"cli": "cli-nav", "cite": "cite-open"}[page]
+        element_id = {"cli": "cli-nav", "cite": "cite-nav"}[page]
         selector = re.compile(rf'<(?:a|button)\b(?=[^>]*\bid="{element_id}")[^>]*>')
     else:
         selector = re.compile(rf'<(?:a|button)\b(?=[^>]*\bdata-view="{page}")[^>]*>')

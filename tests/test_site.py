@@ -140,8 +140,8 @@ def test_citation_formats_are_one_click_away_behind_a_short_link():
     assert "function openCite(" in script
 
     # Three formats, each copied by clicking the citation itself.
-    assert 'copyBlock("APA", CITE_APA, "Click to copy")' in script
-    assert 'copyBlock("BibTeX", CITE_BIBTEX, "Click to copy")' in script
+    assert 'copyBlock("APA", CITE_APA, "Click to copy", false, true)' in script
+    assert 'copyBlock("BibTeX", CITE_BIBTEX, "Click to copy", false, true)' in script
     assert 'copyBlock("Citation file (.cff)", CITE_CFF_URL, "Click to copy link")' in script
     assert "navigator.clipboard.writeText(value)" in script
     assert ".copy-target {" in styles
@@ -162,13 +162,19 @@ def test_citation_formats_are_one_click_away_behind_a_short_link():
 
     # The rendered citations must agree with the file they claim to mirror, or
     # the site would hand out a citation the repository does not make.
-    for fragment in ("10.5281/zenodo.22167102", "Benchmark Radar v0.9.0: Technical Report"):
+    for fragment in (
+        "https://arxiv.org/abs/2609.11115",
+        "Benchmark Radar: A Living Database and Search Engine for AI Benchmarks and Evaluation",
+    ):
         assert fragment in cff
         assert fragment in script
     assert "given-names: Junjie" in cff
-    assert '"Wu, K., & Zhou, J. (2026)' in script
-    assert '"author = {Wu, Koutian and Zhou, Junjie},"' in script
-    assert html.count('name="citation_author"') == 2
+    assert '"Wu, K., Zhou, J., Shang, E., Wang, J., Han, P., Wang, J., & Xu, W. (2026). "' in script
+    assert (
+        '"      author={Koutian Wu and Junjie Zhou and Ergan Shang and Jiayu Wang and '
+        'Pengqian Han and Junkai Wang and Wanghan Xu},"'
+    ) in script
+    assert html.count('name="citation_author"') == 7
     assert '<meta name="citation_author" content="Zhou, Junjie">' in html
 
 

@@ -8390,18 +8390,22 @@ function openContact(updateUrl = true) {
 
 // The published technical report. Contract tests keep these copyable strings
 // aligned with CITATION.cff and the server-rendered citation route.
-const CITE_DOI_URL = "https://doi.org/10.5281/zenodo.22167102";
+const CITE_DOI_URL = "https://arxiv.org/abs/2609.11115";
 const CITE_CFF_URL = "https://github.com/ktwu01/benchmark-radar/blob/main/CITATION.cff";
 const CITE_APA =
-  "Wu, K., & Zhou, J. (2026). Benchmark Radar v0.9.0: Technical Report (Version 0.9.0). " + CITE_DOI_URL;
+  "Wu, K., Zhou, J., Shang, E., Wang, J., Han, P., Wang, J., & Xu, W. (2026). " +
+  "Benchmark Radar: A living database and search engine for AI benchmarks and evaluation. " +
+  "arXiv:2609.11115. " +
+  CITE_DOI_URL;
 const CITE_BIBTEX = [
-  "@techreport{Wu_Benchmark_Radar_v0_9_0_2026,",
-  "author = {Wu, Koutian and Zhou, Junjie},",
-  "doi = {10.5281/zenodo.22167102},",
-  "month = aug,",
-  "title = {{Benchmark Radar v0.9.0: Technical Report}},",
-  "url = {https://zenodo.org/records/22167102},",
-  "year = {2026}",
+  "@misc{wu2026benchmarkradarlivingdatabase,",
+  "      title={Benchmark Radar: A Living Database and Search Engine for AI Benchmarks and Evaluation},",
+  "      author={Koutian Wu and Junjie Zhou and Ergan Shang and Jiayu Wang and Pengqian Han and Junkai Wang and Wanghan Xu},",
+  "      year={2026},",
+  "      eprint={2609.11115},",
+  "      archivePrefix={arXiv},",
+  "      primaryClass={cs.AI},",
+  "      url={https://arxiv.org/abs/2609.11115},",
   "}",
 ].join("\n");
 
@@ -8409,18 +8413,25 @@ const CITE_BIBTEX = [
 // sheet. The block itself is the button: a reader who came for a citation or a
 // setup prompt wants it on the clipboard, so clicking the text copies it rather
 // than making them select eight wrapped lines by hand.
-function copyBlock(label, value, hint, hideLabel = false) {
+//
+// `collapsed` starts the block showing only its hint ("Click to copy") with the
+// raw text hidden, for formats long enough that seeing every one at once turns
+// the sheet into a wall of text. The first click both copies and reveals, so
+// the reader who did not need to read it first still gets it on the clipboard
+// in one click, and the reader who wants to check it can see what they copied.
+function copyBlock(label, value, hint, hideLabel = false, collapsed = false) {
   const status = element("span", { className: "copy-status", text: t(hint) });
   const text = element("code", { className: "copy-text", text: value });
   const copy = element(
     "button",
     {
-      className: "copy-target",
+      className: collapsed ? "copy-target is-collapsed" : "copy-target",
       attrs: { type: "button", "aria-label": `${t(hint)}: ${t(label)}` },
     },
     [text, status],
   );
   copy.addEventListener("click", async () => {
+    copy.classList.remove("is-collapsed");
     try {
       await navigator.clipboard.writeText(value);
       copy.classList.add("is-copied");
@@ -8577,8 +8588,8 @@ function openCite(updateUrl = true) {
       text: t("Pick the format your paper or repository needs, then click it to copy."),
     }),
     element("div", { className: "copy-blocks" }, [
-      copyBlock("APA", CITE_APA, "Click to copy"),
-      copyBlock("BibTeX", CITE_BIBTEX, "Click to copy"),
+      copyBlock("APA", CITE_APA, "Click to copy", false, true),
+      copyBlock("BibTeX", CITE_BIBTEX, "Click to copy", false, true),
       copyBlock("Citation file (.cff)", CITE_CFF_URL, "Click to copy link"),
     ]),
     element("a", {

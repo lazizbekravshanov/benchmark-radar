@@ -16,13 +16,14 @@ conditions and citations.
 
 ## What this fork adds
 
-Four contributions, one per upstream issue, each on its own branch with its own pull request so the
+Five contributions, one per upstream issue, each on its own branch with its own pull request so the
 maintainer can take any of them without the others.
 
 The first two are new daily-discovery connectors. Both are modelled on the existing Crossref
 connector, so they slot into the same pipeline, scoring and provenance rules rather than introducing a
 parallel path. The third is a data change to the model-report registry with no code in it. The fourth
-is the collector behind the "Latest releases" leaderboard, which had a ranking engine but no data.
+is the collector behind the "Latest releases" leaderboard, which had a ranking engine but no data, and
+the fifth is the page that opens on that ranking.
 
 | | DataCite | OpenAIRE |
 | --- | --- | --- |
@@ -90,8 +91,22 @@ request that fails for a reason about the request writes the previous snapshot's
 stale, dated by the day it was actually read, because the ranking reports whatever the newest
 observation says and writing nothing would leave yesterday's reading reported as fresh. Health is per
 metric and stays healthy while any request succeeded, because the ranking demotes fresh readings to
-stale on a failed health event at the same instant. The leaderboard's default view is a separate,
-UI-only follow-up.
+stale on a failed health event at the same instant.
+
+### Leaderboard opening on the latest releases
+
+The second half of [#530](https://github.com/ktwu01/benchmark-radar/issues/530): `/leaderboard/` now
+opens on "Latest releases · 30 days", with 7- and 90-day windows one click away, and keeps model-card
+adoption and reported scores as separate modes on the same address. Each row prints the published
+rank, score and confidence, and behind it every input the rank was computed from with its status
+(fresh, stale since the day it was last read, unavailable, or not observed), its weight and a link to
+the resource it was read from; a release the engine could not rank stays in the list marked as
+limited signals. Permalinks written before the page had modes carry the adoption view's own filters
+and keep opening that view. An empty window says so and offers the wider ones; a window the corpus fails to load says that
+too. The static page is seeded with what the renderer draws for the default window (rows with
+their inputs, the method note, or the empty state), checked against the real renderer byte for
+byte. It is independent of the collector branch: with the collector merged the rows carry real
+counters, without it the page shows its empty state.
 
 ## Three rules both connectors follow
 
@@ -157,6 +172,7 @@ record merging that the connector is built around.
 | OpenAIRE connector | [#545](https://github.com/ktwu01/benchmark-radar/issues/545) | `feat/issue-545-openaire-source` | [#3](https://github.com/lazizbekravshanov/benchmark-radar/pull/3) | not yet opened |
 | VBench family | [#583](https://github.com/ktwu01/benchmark-radar/issues/583) | `data/issue-583-vbench-family` | [#4](https://github.com/lazizbekravshanov/benchmark-radar/pull/4) | not yet opened |
 | Attention collector | [#530](https://github.com/ktwu01/benchmark-radar/issues/530) | `feat/issue-530-benchmark-attention` | [#5](https://github.com/lazizbekravshanov/benchmark-radar/pull/5) | not yet opened |
+| Latest releases view | [#530](https://github.com/ktwu01/benchmark-radar/issues/530) | `feat/issue-530-latest-releases-view` | [#6](https://github.com/lazizbekravshanov/benchmark-radar/pull/6) | not yet opened |
 
 The fork pull requests are staging places to read each change; none is meant to be merged into this
 fork's `main`. [#1](https://github.com/lazizbekravshanov/benchmark-radar/pull/1) held all three
@@ -175,6 +191,7 @@ the maintainer's.
 - **`feat/issue-545-openaire-source`** — one commit, the OpenAIRE connector.
 - **`data/issue-583-vbench-family`** — one commit, the VBench registry entries.
 - **`feat/issue-530-benchmark-attention`** — one commit, the attention collector and its wiring.
+- **`feat/issue-530-latest-releases-view`** — one commit, the leaderboard's latest-releases mode.
 - **`claude/benchmark-radar-contribution-8iyv4h`** — the original combined branch the three above were
   split from, kept for history.
 

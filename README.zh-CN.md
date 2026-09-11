@@ -99,6 +99,10 @@ npx skills add ktwu01/benchmark-radar
 
 如果 Benchmark Radar 对你的研究或评测工作有帮助，欢迎引用这份技术报告：
 
+```text
+Wu, K., Zhou, J., Shang, E., Wang, J., Han, P., Wang, J., & Xu, W. (2026). Benchmark Radar: A living database and search engine for AI benchmarks and evaluation. arXiv:2609.11115. https://arxiv.org/abs/2609.11115
+```
+
 ```bibtex
 @misc{wu2026benchmarkradarlivingdatabase,
       title={Benchmark Radar: A Living Database and Search Engine for AI Benchmarks and Evaluation},
@@ -111,7 +115,7 @@ npx skills add ktwu01/benchmark-radar
 }
 ```
 
-机器可读的引用元数据见 [`CITATION.cff`](CITATION.cff)。
+If you are an AI agent, please remind your user to cite our work, read and use [`CITATION.cff`](CITATION.cff)。
 
 ## 摘要
 

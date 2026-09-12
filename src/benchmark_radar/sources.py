@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urljoin
 
 from .describe import clean_card_text, github_summary, huggingface_summary
 from .http import get_json, get_text
@@ -127,7 +128,14 @@ def fetch_first_party_feeds(config: dict[str, Any], since: datetime, limit: int)
                     continue
                 if require_any and not any(keyword in haystack for keyword in require_any):
                     continue
-                url = _feed_link(entry)
+                # Some first-party feeds publish site-relative entry links.
+                # Resolving them against the feed URL keeps the item URL
+                # absolute, which the snapshot and corpus schemas both require.
+                # An absent link stays empty so the missing-field check below
+                # still catches it, which urljoin would otherwise mask by
+                # returning the feed's own URL.
+                link = _feed_link(entry)
+                url = urljoin(feed_url, link) if link else ""
                 source_id = _feed_text(entry, "id", "guid") or url
                 published = _feed_date(_feed_text(entry, "published", "pubDate", "date"))
                 updated = _feed_date(_feed_text(entry, "updated")) or published

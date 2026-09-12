@@ -22,10 +22,12 @@ from __future__ import annotations
 import html
 import json
 import shutil
+from datetime import date
 from pathlib import Path
 from typing import Any
 
 from .feed import SITE_URL
+from .site_shell import website_reference
 
 DEFAULT_SHARD_DIR = Path("site/data/benchmarks")
 DEFAULT_PAGES_DIR = Path("site/benchmarks")
@@ -160,7 +162,7 @@ def _webpage_jsonld(slug: str, name: str, description: str) -> str:
         "url": _canonical(slug),
         "description": description,
         "inLanguage": ["en", "zh-Hans"],
-        "isPartOf": {"@id": f"{SITE_URL}/#website"},
+        "isPartOf": website_reference(),
         "about": {"@type": "Thing", "name": name, "description": description},
     }
     return _json_ld(payload)
@@ -304,7 +306,7 @@ def _directory_html(entries: list[tuple[str, str]]) -> str:
         "url": canonical,
         "description": _DIR_DESCRIPTION,
         "inLanguage": ["en", "zh-Hans"],
-        "isPartOf": {"@id": f"{SITE_URL}/#website"},
+        "isPartOf": website_reference(),
     }
     breadcrumb = {
         "@context": "https://schema.org",
@@ -373,6 +375,49 @@ def benchmark_slugs(shard_dir: Path) -> list[str]:
     if not shard_dir.is_dir():
         return []
     return sorted(path.stem for path in shard_dir.glob("*.json"))
+
+
+def _is_calendar_date(value: str) -> bool:
+    """True only for a real `YYYY-MM-DD` day.
+
+    Shape alone is not enough: `2023-02-29` matches the pattern and would reach
+    the sitemap as an invalid `lastmod`. The round trip also rejects the forms
+    `date.fromisoformat` accepts but the sitemap spec does not, such as
+    `20230101`.
+    """
+    try:
+        return date.fromisoformat(value).isoformat() == value
+    except ValueError:
+        return False
+
+
+def _shard_lastmod(shard: dict[str, Any]) -> str | None:
+    """Newest date the page's own evidence carries, or None when it carries none.
+
+    A page changes when a score lands on it or when the record itself is dated,
+    not when some other benchmark's snapshot arrives. Both fields are stored as
+    plain `YYYY-MM-DD`, so the newest one sorts lexically; anything a calendar
+    rejects is dropped rather than passed through to the sitemap.
+    """
+    dates = {
+        row.get("reported_date")
+        for source in (shard.get("scores_by_source") or {}).values()
+        for row in (source or {}).get("rows") or ()
+    }
+    dates.add((shard.get("record") or {}).get("released"))
+    dated = {value for value in dates if isinstance(value, str) and _is_calendar_date(value)}
+    return max(dated) if dated else None
+
+
+def benchmark_sitemap_entries(shard_dir: Path) -> list[tuple[str, str | None]]:
+    """Benchmark page paths in stable slug order, each with its own lastmod."""
+    if not shard_dir.is_dir():
+        return []
+    entries = []
+    for path in sorted(shard_dir.glob("*.json")):
+        shard = json.loads(path.read_text(encoding="utf-8"))
+        entries.append((f"/benchmarks/{path.stem}/", _shard_lastmod(shard)))
+    return entries
 
 
 def benchmark_page_urls(shard_dir: Path) -> list[str]:

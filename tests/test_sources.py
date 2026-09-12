@@ -63,6 +63,20 @@ FIRST_PARTY_ATOM = """\
 """
 
 
+FIRST_PARTY_ATOM_RELATIVE_LINK = """\
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <entry>
+    <id>/model-release</id>
+    <title>Introducing a new model</title>
+    <link rel="alternate" href="/model-release/"/>
+    <published>2026-08-08T14:00:00Z</published>
+    <updated>2026-08-08T14:00:00Z</updated>
+    <summary>Evaluation results across the benchmark.</summary>
+  </entry>
+</feed>
+"""
+
+
 def test_first_party_feeds_parse_rss_and_atom_and_filter_noise(monkeypatch):
     payloads = {
         "https://lab.example/rss": FIRST_PARTY_RSS,
@@ -92,6 +106,24 @@ def test_first_party_feeds_parse_rss_and_atom_and_filter_noise(monkeypatch):
     assert items[0].source == "First-party feed"
     assert items[0].source_id == "Lab Atom:tag:lab.example,2026:leaderboard"
     assert items[0].organizations == ["Lab Atom"]
+
+
+def test_first_party_feeds_resolve_relative_entry_links(monkeypatch):
+    monkeypatch.setattr(
+        "benchmark_radar.sources.get_text",
+        lambda url, attempts=3, timeout=30: FIRST_PARTY_ATOM_RELATIVE_LINK,
+    )
+
+    items = fetch_first_party_feeds(
+        {"feeds": [{"name": "Relative Lab", "url": "https://lab.example/feed.xml"}]},
+        datetime(2026, 8, 8, 0, tzinfo=UTC),
+        10,
+    )
+
+    assert [item.url for item in items] == ["https://lab.example/model-release/"]
+    # The entry's own id still identifies the item, so resolving the link does
+    # not renumber records already recorded under the relative URL.
+    assert items[0].source_id == "Relative Lab:/model-release"
 
 
 def test_first_party_feeds_require_any_narrows_broad_publishers(monkeypatch):

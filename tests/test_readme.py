@@ -25,7 +25,8 @@ README = Path("README.md")
 README_ZH = Path("README.zh-CN.md")
 SKILL = Path("skills/benchmark-radar/SKILL.md")
 TECHNICAL_REPORT = "https://arxiv.org/abs/2609.11115"
-REPORT_PDF = "https://github.com/ktwu01/benchmark-radar-paper/blob/main/main.pdf"
+HUGGING_FACE_PAPER = "https://huggingface.co/papers/2609.11115"
+LEGACY_REPORT_PDF = "https://github.com/ktwu01/benchmark-radar-paper/blob/main/main.pdf"
 
 
 def _run(day: int) -> RadarRun:
@@ -114,15 +115,28 @@ def test_chinese_readme_mirrors_the_english_one():
 
 
 def test_readmes_link_the_current_technical_report():
-    # The badge and the resource list point at the tracked LaTeX build, which is
-    # the current report and reads directly on GitHub. The arXiv link stays in
-    # the citation block, where it names the preferred citation.
+    # The badge and resource links point at the published arXiv paper rather
+    # than the source repository. The Daily Papers badge provides a second
+    # discovery path while the LaTeX source remains linked separately.
     for readme in (README, README_ZH):
         text = readme.read_text(encoding="utf-8")
-        assert f'<a href="{REPORT_PDF}">' in text
-        assert "TECH%20REPORT" in text
-        assert f"({REPORT_PDF})" in text
-        assert TECHNICAL_REPORT in text
+        assert f'<a href="{TECHNICAL_REPORT}">' in text
+        assert "arXiv-Paper" in text
+        assert f'<a href="{HUGGING_FACE_PAPER}">' in text
+        assert "Hugging%20Face-Upvote%20us" in text
+        assert 'src="site/assets/hf-paper-of-the-day.svg"' in text
+        assert 'href="https://huggingface.co/papers/date/2026-09-14"' in text
+        assert f"({TECHNICAL_REPORT})" in text
+        assert LEGACY_REPORT_PDF not in text
+
+
+def test_technical_report_readme_links_both_paper_pages():
+    text = Path("docs/technical-report/README.md").read_text(encoding="utf-8")
+
+    assert f'<a href="{TECHNICAL_REPORT}">' in text
+    assert "arXiv-Paper" in text
+    assert f'<a href="{HUGGING_FACE_PAPER}">' in text
+    assert "%232%20Paper%20of%20the%20Day%20%E2%80%A2%20Upvote%20us" in text
 
 
 def test_citation_metadata_prefers_the_technical_report():
@@ -243,5 +257,18 @@ def test_readmes_state_the_live_ingest_source_count() -> None:
     connectors, feeds = count_ingest_sources(Path.cwd())
     total = connectors + feeds
 
-    assert f"from {total} public sources every day" in README.read_text(encoding="utf-8")
-    assert f"每天从 {total} 个公开来源采集" in README_ZH.read_text(encoding="utf-8")
+    english = README.read_text(encoding="utf-8")
+    chinese = README_ZH.read_text(encoding="utf-8")
+
+    assert f"from {total} public sources every day" in english
+    assert f"每天从 {total} 个公开来源采集" in chinese
+    # Each README states the figure twice: once in the opening line and again
+    # in the Abstract, which also splits it into connectors and feeds. Holding
+    # only the first one let a connector PR update the headline and leave the
+    # Abstract saying 37, so both READMEs contradicted themselves in the same
+    # file while this test stayed green.
+    assert (
+        f"draws on {total} sources: {connectors} direct connectors and {feeds} first-party"
+        in english
+    )
+    assert f"覆盖 {total} 个来源：{connectors} 个直接 connector 和 {feeds} 个机构自有的" in chinese

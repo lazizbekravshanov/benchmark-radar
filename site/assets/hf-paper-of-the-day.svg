@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="360" height="96" viewBox="0 0 360 96" role="img" aria-labelledby="title desc">
+  <title id="title">Hugging Face: #1 Paper of the Day, September 14, 2026</title>
+  <desc id="desc">Gold laurel wreath celebrating Benchmark Radar's first-place ranking on Hugging Face Daily Papers.</desc>
+  <!-- Project-made badge. Ranking verified on 2026-09-14:
+       https://huggingface.co/papers/2609.11115
+       https://huggingface.co/papers/date/2026-09-14 -->
+  <rect x="0.5" y="0.5" width="359" height="95" rx="12" fill="#fffbeb" stroke="#e8cd83"/>
+  <defs>
+    <g id="laurel" fill="#b58422">
+      <path d="M60 80C29 73 20 43 37 18" fill="none" stroke="#b58422" stroke-width="1.5" stroke-linecap="round"/>
+      <path d="M35 22C30 16 34 10 42 9C42 15 40 20 35 22Z"/>
+      <path d="M29 33C22 30 20 23 24 18C29 22 31 28 29 33Z"/>
+      <path d="M28 43C20 43 15 38 16 31C23 33 27 37 28 43Z"/>
+      <path d="M31 55C22 57 16 53 14 46C22 45 28 48 31 55Z"/>
+      <path d="M37 66C29 70 22 68 18 61C26 58 33 60 37 66Z"/>
+      <path d="M47 75C41 81 33 81 27 76C34 71 41 70 47 75Z"/>
+      <path d="M29 35C28 28 33 23 39 23C38 29 35 34 29 35Z"/>
+      <path d="M29 47C28 39 32 34 38 33C39 39 36 45 29 47Z"/>
+      <path d="M34 59C31 52 34 45 39 43C42 49 40 56 34 59Z"/>
+      <path d="M42 70C36 65 37 58 41 53C46 58 46 65 42 70Z"/>
+    </g>
+  </defs>
+  <use href="#laurel"/>
+  <use href="#laurel" transform="translate(120 0) scale(-1 1)"/>
+  <g font-family="Arial, Helvetica, sans-serif" text-anchor="middle">
+    <text x="60" y="57" font-size="29" font-weight="700" fill="#805619">#1</text>
+  </g>
+  <g font-family="Arial, Helvetica, sans-serif">
+    <text x="127" y="29" font-size="11" font-weight="700" letter-spacing="1.5" fill="#805619">HUGGING FACE</text>
+    <text x="126" y="54" font-size="22" font-weight="700" fill="#302719">Paper of the Day</text>
+    <text x="127" y="76" font-size="12" fill="#786548">September 14, 2026</text>
+  </g>
+</svg>

@@ -253,6 +253,61 @@ th {
   justify-content: flex-end;
 }
 
+.hf-upvote-banner {
+  border-bottom: 1px solid #e8cd83;
+  background: #fffbeb;
+}
+
+.hf-upvote-banner-inner {
+  display: flex;
+  width: min(1680px, calc(100% - 48px));
+  gap: 0.65rem;
+  align-items: center;
+  justify-content: center;
+  margin-inline: auto;
+  padding-block: 0.25rem;
+}
+
+.hf-paper-award {
+  width: 200px;
+  min-width: 0;
+  max-width: 100%;
+  border-radius: 8px;
+}
+
+.hf-paper-award img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.hf-upvote-copy {
+  display: inline-flex;
+  min-height: 44px;
+  gap: 0.4rem;
+  align-items: center;
+  color: #805619;
+  font-family: var(--utility);
+  font-size: 0.78rem;
+  font-weight: 750;
+  letter-spacing: 0.035em;
+  white-space: nowrap;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.18em;
+}
+
+.hf-upvote-copy:hover,
+.hf-upvote-copy:focus-visible {
+  text-decoration-thickness: 2px;
+}
+
+.hf-paper-award:focus-visible,
+.hf-upvote-copy:focus-visible {
+  outline: 2px solid #805619;
+  outline-offset: 3px;
+}
+
 .repo-badge {
   position: relative;
   display: inline-flex;
@@ -4250,6 +4305,10 @@ footer {
   color: var(--muted);
 }
 
+.copyright {
+  font-size: 0.72rem;
+}
+
 .footer-nav {
   display: flex;
   flex-wrap: wrap;
@@ -4302,6 +4361,16 @@ footer {
   main,
   footer {
     width: min(100% - 28px, 1440px);
+  }
+
+  .hf-upvote-banner-inner {
+    width: min(100% - 28px, 1440px);
+    gap: 0.5rem;
+  }
+
+  .hf-upvote-copy {
+    font-size: 0.7rem;
+    letter-spacing: 0.02em;
   }
 
   /* `width: 100%` on a wide viewBox scales the height down with it, so at 390px

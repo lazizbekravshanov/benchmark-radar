@@ -198,6 +198,7 @@ def test_offline_cli_route_is_in_the_view_bar_behind_a_short_link():
     # The single command shares the citation card's copy control rather than
     # adding another clipboard handler, and its label is for screen readers only.
     assert 'copyBlock("Install", CLI_SKILL_INSTALL, "Click to copy", true)' in script
+    assert 'query && copyBlock("Agent prompt", cliAgentPrompt(query), "Click to copy")' in script
     assert 'hideLabel ? "copy-label visually-hidden" : "copy-label"' in script
 
     # The card holds no data either, so it opens before the fetch and closes on
@@ -380,7 +381,7 @@ def test_search_defaults_to_all_dates_and_explains_the_scope():
     )[0]
     assert 'state.todayDate !== "all"' in banner
     assert "totalResults > 10" in banner
-    assert 'attrs: { href: "/cli/" }' in banner
+    assert "attrs: { href: cliSearchUrl(query) }" in banner
     assert "openCli();" in banner
     assert 'text: t("Search today")' in banner
     assert "state.todayDate = state.data.latest_date;" in banner
@@ -614,6 +615,8 @@ def test_clean_route_model_migrates_legacy_urls_and_preserves_utility_background
             section("function scoreCutoff(", "function matchesScoreFilter("),
             section("function readUrl()", "// `push` adds a history entry"),
             section("function writeUrl(", "// A pushed entry changes the URL"),
+            section("function cliSearchUrl(", "function renderSearchScopeBanner("),
+            section("const CLI_SKILL_URL =", "// True only while the open card owns"),
         )
     )
     program = f"""
@@ -687,6 +690,30 @@ readUrl();
 results.forwardView = state.view;
 results.forwardQuery = state.lq;
 
+install("/?date=all&q=RSI");
+readUrl();
+results.searchLink = cliSearchUrl(state.q);
+state.cli = true;
+writeUrl("push");
+results.searchCli = {{
+  url: window.location.pathname + window.location.search,
+  background: window.history.state.benchmarkRadarUtility.backgroundUrl,
+}};
+readUrl();
+results.forwardCliSearch = {{
+  query: state.q, view: state.view, prompt: cliAgentPrompt(state.q),
+}};
+
+install("/cli/?q=RSI+%26+MMLU");
+readUrl();
+results.directCliSearch = {{ query: state.q, cli: state.cli }};
+writeUrl("replace");
+results.directCliUrl = window.location.pathname + window.location.search;
+
+install("/cli/");
+readUrl();
+results.plainCliQuery = state.q;
+
 install("/cite/");
 readUrl();
 results.directCite = {{ view: state.view, cite: state.cite }};
@@ -726,6 +753,17 @@ console.log(JSON.stringify(results));
     }
     assert routes["forwardView"] == "leaderboard"
     assert routes["forwardQuery"] == "agent"
+    assert routes["searchLink"] == "/cli/?q=RSI"
+    assert routes["searchCli"] == {
+        "url": "/cli/?q=RSI",
+        "background": "/?date=all&q=RSI",
+    }
+    assert routes["forwardCliSearch"]["query"] == "RSI"
+    assert routes["forwardCliSearch"]["view"] == "today"
+    assert 'Then search for "RSI" using this CLI and Skill.' in routes["forwardCliSearch"]["prompt"]
+    assert routes["directCliSearch"] == {"query": "RSI & MMLU", "cli": True}
+    assert routes["directCliUrl"] == "/cli/?q=RSI+%26+MMLU"
+    assert routes["plainCliQuery"] == ""
     assert routes["directCite"] == {"view": "today", "cite": True}
 
 
@@ -1431,6 +1469,34 @@ def test_badge_accessible_names_state_the_action():
     assert "Fork this repository on GitHub" not in script
     assert "Open a new issue on GitHub" not in script
     assert 'badge.setAttribute("aria-label"' in script
+
+
+def test_hugging_face_rank_badge_asks_for_an_upvote():
+    html = Path("site/index.html").read_text(encoding="utf-8")
+    styles = Path("site/assets/styles.css").read_text(encoding="utf-8")
+    script = Path("site/assets/app.js").read_text(encoding="utf-8")
+
+    assert 'href="https://huggingface.co/papers/2609.11115"' in html
+    assert 'target="_blank"' in html
+    assert 'rel="noopener noreferrer"' in html
+    assert 'class="hf-upvote-banner"' in html
+    assert 'href="https://huggingface.co/papers/date/2026-09-14"' in html
+    assert 'src="/assets/hf-paper-of-the-day.svg"' in html
+    assert 'data-i18n="Upvote us"' in html
+    assert (
+        'data-i18n-aria="Hugging Face: #1 Paper of the Day, '
+        'September 14, 2026. View the ranking"' in html
+    )
+    badge = Path("site/assets/hf-paper-of-the-day.svg").read_text(encoding="utf-8")
+    assert "#1 Paper of the Day, September 14, 2026" in badge
+    assert ".hf-paper-award:focus-visible" in styles
+    assert ".hf-upvote-copy:focus-visible" in styles
+    mobile = styles.split("@media (max-width: 760px)", 1)[1]
+    assert ".hf-upvote-banner-inner" in mobile
+    assert "width: min(100% - 28px, 1440px)" in mobile
+    assert '"Upvote us": "帮我们投一票"' in script
+    assert '"Hugging Face 每日论文第 1 名，2026 年 9 月 14 日。查看榜单"' in script
+    assert "#2 Paper of the Day" not in html + script
 
 
 def test_repo_badge_counts_are_visible():

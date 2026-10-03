@@ -110,6 +110,7 @@ def main() -> None:
             "normalize-catalog",
             "normalize-external",  # Compatibility with installed maintainer scripts.
             "build-data-release",
+            "export-hf",
             *sorted(QUERY_COMMANDS),
         ),
         default="run",
@@ -122,10 +123,22 @@ def main() -> None:
             "the public profiles of authors behind popular benchmark repositories, "
             "render the daily social post section from the day's evidence and git history, "
             "or normalize the committed source snapshots and model reports into the shared "
-            "benchmark catalog, or build the downloadable CLI dataset. Query commands "
-            "search and inspect managed local artifacts "
-            "through the same contract exposed by the local HTTP API."
+            "benchmark catalog, build the downloadable CLI dataset, or export "
+            "the Hugging Face dataset release. Query commands search and inspect "
+            "managed local artifacts through the same contract exposed by the local HTTP API."
         ),
+    )
+    parser.add_argument(
+        "--hf-output-dir",
+        type=Path,
+        default=Path("site/data/hf_dataset"),
+        help="Output directory for the Hugging Face dataset export.",
+    )
+    parser.add_argument(
+        "--hf-radar-path",
+        type=Path,
+        default=None,
+        help="Explicit path to radar.json for Hugging Face dataset export.",
     )
     parser.add_argument(
         "--author-output",
@@ -486,6 +499,24 @@ def main() -> None:
             f"CLI data release: {manifest['data_version']} "
             f"({manifest['benchmark_count']} benchmarks, "
             f"{manifest['snapshot_count']} snapshots)"
+        )
+        return
+
+    if args.command == "export-hf":
+        from .hf_dataset import export_hf_dataset
+        from .query import QueryPaths
+
+        res = export_hf_dataset(
+            output_dir=args.hf_output_dir,
+            paths=QueryPaths(),
+            radar_path=args.hf_radar_path,
+        )
+        print(
+            f"Hugging Face dataset exported to {res.export_dir}:\n"
+            f"  - catalog: {res.catalog_count} benchmarks\n"
+            f"  - scores: {res.scores_count} score observations\n"
+            f"  - radar_artifacts: {res.artifacts_count} artifacts\n"
+            f"  - radar_observations: {res.observations_count} observations"
         )
         return
 

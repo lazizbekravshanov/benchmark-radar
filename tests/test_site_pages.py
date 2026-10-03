@@ -31,6 +31,7 @@ def _shard(
     released: str | None = None,
     modality: str | None = None,
     scores: list[dict] | None = None,
+    provenance: dict | None = None,
 ) -> dict:
     record = {
         "slug": slug,
@@ -43,6 +44,7 @@ def _shard(
         "released": released,
         "openness": {"status": "unknown", "code_license": None, "data_license": None},
         "description": {"en": description} if description else {},
+        "provenance": provenance or {},
     }
     scores_by_source = {source: {"rows": scores or [], "series": {}}} if scores else {}
     return {
@@ -100,6 +102,57 @@ def test_output_is_byte_deterministic(tmp_path):
     write_benchmark_pages(shard_dir, second)
     for path in sorted(p.relative_to(first) for p in first.rglob("index.html")):
         assert (second / path).read_bytes() == (first / path).read_bytes()
+
+
+def test_unscored_page_does_not_advertise_results_from_an_empty_bucket(tmp_path):
+    shard = _shard("alpha-bench", "Alpha Bench")
+    shard["scores_by_source"] = {"test_source": {"rows": [], "series": {}}}
+
+    output = _generated_pages(tmp_path, shard)
+    page = _page_text(output, "alpha-bench")
+
+    assert "Results" not in page.split("</title>", 1)[0]
+    assert "No reported scores are on record" in page
+
+
+def test_page_shows_importer_original_evidence_and_review_status(tmp_path):
+    output = _generated_pages(
+        tmp_path,
+        _shard(
+            "alpha-bench",
+            "Alpha Bench",
+            source="claire_radar",
+            provenance={
+                "source_url": "https://example.org/original-record",
+                "review_state": "source-reviewed",
+            },
+        ),
+    )
+    page = _page_text(output, "alpha-bench")
+
+    assert "Importer" in page
+    assert "Claire Radar" in page
+    assert "Original evidence" in page
+    assert 'href="https://example.org/original-record"' in page
+    assert "Review status" in page
+    assert "source-reviewed" in page
+
+
+@pytest.mark.parametrize("source_url", ["javascript:alert(1)", "data:text/html,x", "http://["])
+def test_page_omits_unsafe_original_evidence_links(tmp_path, source_url):
+    output = _generated_pages(
+        tmp_path,
+        _shard(
+            "alpha-bench",
+            "Alpha Bench",
+            source="claire_radar",
+            provenance={"source_url": source_url},
+        ),
+    )
+    page = _page_text(output, "alpha-bench")
+
+    assert "Original evidence" not in page
+    assert source_url not in page
 
 
 def test_page_has_unique_title_and_canonical(tmp_path):

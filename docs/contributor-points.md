@@ -22,6 +22,12 @@ This public ledger is rebuilt from GitHub once per day. Do not edit the totals b
 | @Lareina1024 | 2 | no |
 | @yzliu03 | 1 | no |
 
+## Active claims / 进行中的认领
+
+| Issue | Contributor | Deadline | Points |
+|---|---|---|---:|
+| [#487](https://github.com/ktwu01/benchmark-radar/issues/487) | @bigdu332 | 2026-10-04T15:19:18+00:00 | 2 |
+
 ## Earned points / 得分记录
 
 | Work | Contributor | Points |

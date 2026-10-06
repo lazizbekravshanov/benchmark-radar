@@ -288,6 +288,71 @@ def test_distinct_and_empty_summaries_are_allowed():
     assert_no_boilerplate_summaries(varied)
 
 
+def test_same_owner_upstream_card_bodies_are_allowed():
+    from unittest.mock import patch
+
+    from benchmark_radar.sources import fetch_huggingface
+
+    description = (
+        "Model-comparison table for this task: one row per evaluated model, written by\n"
+        "push_results_table in src/eval/utilities.py. Per-sample predictions are in\n"
+        "per_sample/.\n"
+    )
+    rows = [
+        {
+            "id": f"bdatm-project/evaluation-results-task{task}",
+            "createdAt": "2026-09-06T21:21:35Z",
+            "lastModified": "2026-10-04T10:00:00Z",
+            "description": description,
+        }
+        for task in (1, 2, 3)
+    ]
+    with patch("benchmark_radar.sources.get_json", return_value=rows):
+        records = fetch_huggingface(
+            {"kinds": ["datasets"], "searches": ["evaluation"]},
+            datetime(2026, 10, 3, tzinfo=UTC),
+            10,
+        )
+
+    assert len(records) == 3
+    assert all(record.summary for record in records)
+    assert_no_boilerplate_summaries(records)
+
+
+@pytest.mark.parametrize(
+    "invalid_evidence", ["missing", "rewritten", "short", "owner", "source", "suite", "unnumbered"]
+)
+def test_repeated_summaries_still_require_same_owner_card_bodies(invalid_evidence):
+    summary = "Measurements for three evaluation tasks."
+    records = [
+        item(
+            source="Hugging Face",
+            source_id=f"lab/evaluation-results-task{task}",
+            summary=summary,
+            raw={"description": summary},
+        )
+        for task in range(3)
+    ]
+    if invalid_evidence == "missing":
+        records[0].raw = {}
+    elif invalid_evidence == "rewritten":
+        records[0].raw = {"description": "Different upstream prose."}
+    elif invalid_evidence == "short":
+        records[0].raw = {"cardData": {"short_description": summary}}
+    elif invalid_evidence == "owner":
+        records[0].source_id = "other-lab/evaluation-results-task0"
+    elif invalid_evidence == "source":
+        records[0].source = "GitHub"
+    elif invalid_evidence == "suite":
+        records[0].source_id = "lab/other-results-task0"
+    else:
+        for task, record in enumerate(records):
+            record.source_id = f"lab/unrelated-repo-{task}"
+
+    with pytest.raises(RuntimeError, match="templated descriptions"):
+        assert_no_boilerplate_summaries(records)
+
+
 def test_boilerplate_summary_cannot_earn_relevance():
     """The old template contained taxonomy words, so every Hugging Face record
     scored a free `dataset` category regardless of its content."""
@@ -1238,6 +1303,112 @@ def test_simulate_backfill_excludes_items_published_after_the_simulated_date(mon
 
     titles = {item_.source_id for item_ in run.items}
     assert titles == {"org/early"}
+
+
+def test_simulate_backfill_places_an_openaire_product_on_its_publication_day(monkeypatch):
+    """A product must land on the day a live run would have collected it.
+
+    `fetch_openaire` decides membership on `publicationDate`, while this
+    function places an item by `updated_at or published_at`. The row also
+    carries `dateOfCollection`, the day OpenAIRE indexed the product, which is
+    routinely months later; dating the record by it would hide the product on
+    its publication day and surface it on a day the connector's own window
+    guard rejects. The real connector runs here so both halves of that
+    contract are checked against each other.
+    """
+    monkeypatch.setattr(
+        "benchmark_radar.sources.get_json",
+        lambda url, **kwargs: {
+            "header": {"numFound": 1},
+            "results": [
+                {
+                    "id": "openaire____::radar99001",
+                    "mainTitle": "A Federated Benchmark Dataset",
+                    "publicationDate": "2026-07-05",
+                    "dateOfCollection": "2026-07-20T00:00:00Z",
+                    "pids": [{"scheme": "doi", "value": "10.5281/zenodo.99001"}],
+                }
+            ],
+        },
+    )
+    config = _backfill_config()
+    config["sources"]["openaire"] = {"enabled": True, "searches": ["benchmark"]}
+    dates = [datetime(2026, 7, 5, 12, tzinfo=UTC), datetime(2026, 7, 20, 12, tzinfo=UTC)]
+
+    publication_day, collection_day = simulate_backfill(config, dates)
+
+    assert [item_.source_id for item_ in publication_day.items] == ["openaire____::radar99001"]
+    assert [item_.source_id for item_ in collection_day.items] == []
+
+
+def test_simulate_backfill_places_a_datacite_doi_on_its_registration_day(monkeypatch):
+    """A metadata edit must not move a DOI to a day its own window rejects.
+
+    `fetch_datacite` decides membership on `registered`, while this function
+    places an item by `updated_at or published_at`. While the connector put
+    DataCite's mutable `updated` there, a DOI registered on the 5th and edited
+    on the 20th disappeared from the 5th, the day a live run would have
+    published it, and appeared on the 20th, which the connector's own window
+    guard rejects. The real connector runs here so the two halves of that
+    contract are checked against each other rather than separately.
+    """
+    monkeypatch.setattr(
+        "benchmark_radar.sources.get_json",
+        lambda url, **kwargs: {
+            "data": [
+                {
+                    "id": "10.5281/zenodo.99001",
+                    "attributes": {
+                        "doi": "10.5281/ZENODO.99001",
+                        "titles": [{"title": "A Deposited Benchmark Dataset"}],
+                        "registered": "2026-07-05T09:00:00.000Z",
+                        "updated": "2026-07-20T10:00:00.000Z",
+                    },
+                }
+            ]
+        },
+    )
+    config = _backfill_config()
+    config["sources"]["datacite"] = {"enabled": True, "searches": ["benchmark"]}
+    dates = [datetime(2026, 7, 5, 12, tzinfo=UTC), datetime(2026, 7, 20, 12, tzinfo=UTC)]
+
+    registration_day, edit_day = simulate_backfill(config, dates)
+
+    assert [item_.source_id for item_ in registration_day.items] == ["10.5281/zenodo.99001"]
+    assert [item_.source_id for item_ in edit_day.items] == []
+
+
+def test_simulate_backfill_asks_each_source_for_the_span_it_simulates(monkeypatch):
+    """A backfilled day must not be empty because the query ran up to today.
+
+    Every backfill connector takes its upper bound from `_collection_now` and
+    returns one page of its newest matches. Called without it, each one queried
+    up to real now, so a historical span came back full of rows published this
+    week; the per-date filter discarded all of them and the rows that actually
+    belonged in the requested windows were never fetched. The day then looked
+    like a quiet day rather than an unasked question.
+    """
+    seen: dict[str, datetime] = {}
+
+    def fake_datacite(config, since, limit):
+        seen["upper"] = config["_collection_now"]
+        seen["since"] = since
+        return []
+
+    monkeypatch.setitem(
+        __import__("benchmark_radar.pipeline", fromlist=["SOURCE_FETCHERS"]).SOURCE_FETCHERS,
+        "datacite",
+        fake_datacite,
+    )
+    config = _backfill_config()
+    config["sources"]["datacite"] = {"enabled": True, "searches": ["benchmark"]}
+    dates = [datetime(2026, 7, 5, 12, tzinfo=UTC), datetime(2026, 7, 20, 12, tzinfo=UTC)]
+
+    simulate_backfill(config, dates)
+
+    # The newest day being simulated, not whenever this happens to run.
+    assert seen["upper"] == dates[-1]
+    assert seen["since"] < dates[0]
 
 
 def test_simulate_backfill_marks_arxiv_as_a_known_limitation(monkeypatch):

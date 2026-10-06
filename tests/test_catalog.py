@@ -16,6 +16,7 @@ import yaml
 
 from benchmark_radar.catalog import (
     CatalogError,
+    assign_slugs,
     normalize_snapshot,
     slugify,
     write_catalog,
@@ -145,6 +146,19 @@ def test_slugs_are_filename_safe_and_unique(normalized: dict) -> None:
         assert slug.strip("-") == slug
 
 
+def test_assign_slugs_disambiguates_without_colliding_with_a_natural_slug() -> None:
+    """A "-N" suffix must not land on a slug another key already owns.
+
+    "vending bench" and "vending:bench" both slugify to "vending-bench", so the
+    second needs a suffix -- but "vending-bench-2" is itself a real key whose
+    natural slug is already "vending-bench-2". Appending "-2" blindly would give
+    two records the same shard filename, dropping one and tripping the query
+    index's uniqueness guard.
+    """
+    slugs = assign_slugs(["vending bench", "vending-bench-2", "vending:bench"])
+    assert len(set(slugs.values())) == len(slugs)
+
+
 def test_community_uuid_keys_survive_slugging(normalized: dict) -> None:
     """Colon-bearing ids are exactly what a naive filename scheme breaks on."""
     record = next(
@@ -261,6 +275,7 @@ def write_registry(tmp_path: Path, rows: int) -> Path:
                         "crawled_at": "2026-08-17T00:00:00+00:00",
                         "benchmark_file": "files/bench.csv",
                         "benchmark_count": 3,
+                        "score_series_policy": "preserve_empty",
                         "columns": {"benchmark_id": "benchmark_id", "benchmark_name": "name"},
                     }
                 ],
@@ -277,10 +292,161 @@ def test_loader_accepts_a_file_matching_its_declaration(tmp_path: Path) -> None:
     assert len(loaded["snapshots"][0]["benchmark_rows"]) == 3
 
 
+def _rewrite_registry(tmp_path: Path, change) -> Path:
+    registry = write_registry(tmp_path, rows=3)
+    document = yaml.safe_load(registry.read_text(encoding="utf-8"))
+    change(document["snapshots"][0])
+    registry.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+    return registry
+
+
+def test_loader_requires_a_score_series_policy(tmp_path: Path) -> None:
+    registry = _rewrite_registry(tmp_path, lambda snapshot: snapshot.pop("score_series_policy"))
+
+    with pytest.raises(LeaderboardSnapshotError, match="score_series_policy"):
+        load_snapshots(registry)
+
+
+def test_loader_rejects_an_unknown_score_series_policy(tmp_path: Path) -> None:
+    registry = _rewrite_registry(
+        tmp_path, lambda snapshot: snapshot.__setitem__("score_series_policy", "source_specific")
+    )
+
+    with pytest.raises(LeaderboardSnapshotError, match="score_series_policy"):
+        load_snapshots(registry)
+
+
+def test_loader_rejects_an_unknown_catalog_adapter(tmp_path: Path) -> None:
+    registry = _rewrite_registry(
+        tmp_path, lambda snapshot: snapshot.__setitem__("catalog_adapter", "test_only")
+    )
+
+    with pytest.raises(LeaderboardSnapshotError, match="catalog_adapter"):
+        load_snapshots(registry)
+
+
+def _synthetic_snapshot(policy: str) -> dict:
+    return {
+        "id": LLM_STATS_SNAPSHOT_ID,
+        "crawled_at": "2026-08-17T00:00:00+00:00",
+        "score_series_policy": policy,
+        "catalog_adapter": "identity",
+        "adapter_options": {},
+        "benchmark_rows": [{"benchmark_id": "empty", "name": "Empty Bench"}],
+        "score_rows": [],
+    }
+
+
+def test_observed_only_policy_omits_an_empty_series_for_any_source() -> None:
+    normalized = normalize_snapshot(_synthetic_snapshot("observed_only"))
+
+    assert len(normalized["source_records"]) == 1
+    assert normalized["score_series"] == []
+
+
+def test_preserve_empty_policy_retains_an_empty_series_for_any_source() -> None:
+    normalized = normalize_snapshot(_synthetic_snapshot("preserve_empty"))
+
+    assert len(normalized["score_series"]) == 1
+    assert normalized["score_series"][0]["observation_count"] == 0
+
+
+def test_common_normalizer_consumes_adapter_normalized_dates_and_metadata() -> None:
+    snapshot = _synthetic_snapshot("observed_only")
+    snapshot["benchmark_rows"][0].update(
+        {
+            "released": "2026-01-02",
+            "released_basis": "first_public",
+            "released_source_url": "https://example.org/launch",
+            "publication_dates": [
+                {
+                    "date": "2026-01-09",
+                    "basis": "paper_first_version",
+                    "source_url": "https://arxiv.org/abs/2601.00001",
+                }
+            ],
+            "extra_json": '{"private": "kept"}',
+        }
+    )
+
+    [record] = normalize_snapshot(snapshot)["source_records"]
+
+    assert record["released_reference"] == {
+        "source_key": "llm-stats:empty",
+        "source_url": "https://example.org/launch",
+        "basis": "first_public",
+    }
+    assert record["publication_dates"] == [
+        {
+            "date": "2026-01-09",
+            "basis": "paper_first_version",
+            "source_url": "https://arxiv.org/abs/2601.00001",
+        }
+    ]
+    assert record["source_metadata"] == {"llm_stats": {"private": "kept"}}
+
+
+def test_common_normalizer_rejects_an_invalid_normalized_date_basis() -> None:
+    snapshot = _synthetic_snapshot("observed_only")
+    snapshot["benchmark_rows"][0].update(
+        {
+            "released": "2026-01-02",
+            "released_basis": "source_specific",
+            "released_source_url": "https://example.org/launch",
+        }
+    )
+
+    with pytest.raises(CatalogError, match="released_basis"):
+        normalize_snapshot(snapshot)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "error"),
+    [
+        ("released", "2026-02-30", "released"),
+        (
+            "publication_dates",
+            [
+                {
+                    "date": "not-a-date",
+                    "basis": "paper_first_version",
+                    "source_url": "https://arxiv.org/abs/2601.00001",
+                }
+            ],
+            "publication_dates\\[0\\].date",
+        ),
+    ],
+)
+def test_common_normalizer_rejects_invalid_normalized_dates(field, value, error) -> None:
+    snapshot = _synthetic_snapshot("observed_only")
+    snapshot["benchmark_rows"][0].update(
+        {
+            "released": "2026-01-02",
+            "released_basis": "first_public",
+            "released_source_url": "https://example.org/launch",
+            field: value,
+        }
+    )
+
+    with pytest.raises(CatalogError, match=error):
+        normalize_snapshot(snapshot)
+
+
 def test_loader_rejects_a_file_whose_row_count_drifted(tmp_path: Path) -> None:
     """A truncated copy would otherwise look identical to a complete snapshot."""
     with pytest.raises(LeaderboardSnapshotError, match="registry declares 3"):
         load_snapshots(write_registry(tmp_path, rows=2))
+
+
+def test_loader_rejects_a_file_whose_declared_hash_drifted(tmp_path: Path) -> None:
+    """A same-length edit must not pass merely because its row count is stable."""
+    registry = write_registry(tmp_path, rows=3)
+    document = yaml.safe_load(registry.read_text(encoding="utf-8"))
+    document["snapshots"][0]["benchmark_sha256"] = "0" * 64
+    registry.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+
+    with pytest.raises(LeaderboardSnapshotError, match="SHA-256 mismatch"):
+        load_snapshots(registry)
 
 
 def test_opencompass_normalizes_and_cleans_licences() -> None:
@@ -420,6 +586,35 @@ def all_records(normalized: dict) -> list[dict]:
     return normalized["source_records"] + normalize_opencompass()["source_records"]
 
 
+@pytest.fixture(scope="module")
+def full_records() -> list[dict]:
+    from benchmark_radar.benchmark_scores import DEFAULT_SCORES_PATH, load_scores
+    from benchmark_radar.catalog import SOURCES
+    from benchmark_radar.catalog_opencompass import normalize_opencompass
+    from benchmark_radar.catalog_reports import normalize_reports
+    from benchmark_radar.model_cards import DEFAULT_REGISTRY_PATH, load_registry
+
+    # The model-report registry is a source record population like the crawls,
+    # and `normalize-catalog` resolves identity across all of them. Without it
+    # here, a reviewed group naming a registry record passes every test in this
+    # file and fails the real build with "not a source record" -- the exact
+    # failure the seed test below exists to prevent.
+    snapshots = load_snapshots(DEFAULT_SNAPSHOTS_PATH)["snapshots"]
+    return (
+        [
+            record
+            for snapshot in snapshots
+            if snapshot["id"] in SOURCES
+            for record in normalize_snapshot(snapshot)["source_records"]
+        ]
+        + normalize_opencompass()["source_records"]
+        + normalize_reports(
+            load_registry(DEFAULT_REGISTRY_PATH),
+            load_scores(DEFAULT_SCORES_PATH),
+        )["source_records"]
+    )
+
+
 # Identity candidate generation
 
 
@@ -470,11 +665,11 @@ def _write_identity(tmp_path: Path, payload: dict) -> Path:
     return path
 
 
-def test_identity_seed_loads_against_the_records(all_records: list[dict]) -> None:
+def test_identity_seed_loads_against_the_records(full_records: list[dict]) -> None:
     """The checked-in seed must resolve against the real records or the build lies."""
     from benchmark_radar.catalog_identity import DEFAULT_IDENTITY_PATH, load_identity
 
-    identity = load_identity(all_records, DEFAULT_IDENTITY_PATH)
+    identity = load_identity(full_records, DEFAULT_IDENTITY_PATH)
     # Every seed variant is cross-linked both ways as a sibling.
     assert identity.siblings_for("opencompass:517")  # RACE(Middle) -> RACE(High)
     assert identity.siblings_for("opencompass:516")  # and back
@@ -769,8 +964,30 @@ def test_inheritance_never_touches_scores_or_other_records(
     assert all("identity_inheritance" not in obs for obs in normalized["score_observations"])
 
 
+def test_claire_exact_identity_links_are_reviewed_and_bidirectional(
+    full_records: list[dict],
+) -> None:
+    from benchmark_radar.catalog_identity import DEFAULT_IDENTITY_PATH, load_identity
+
+    # `load_identity` validates every group in the seed, not just the Claire
+    # ones, so it needs the same record population `normalize-catalog` resolves
+    # against -- model reports included.
+    identity = load_identity(full_records, DEFAULT_IDENTITY_PATH)
+
+    expected = {
+        "claire-radar:2608.05948": "opencompass:2574",
+        "claire-radar:2608.09548": "opencompass:2571",
+    }
+    for left, right in expected.items():
+        assert {row["key"] for row in identity.siblings_for(left)} == {right}
+        assert {row["key"] for row in identity.siblings_for(right)} == {left}
+        assert identity.siblings_for(left)[0]["relation"] == "equivalent"
+    assert identity.inheritance_for("claire-radar:2608.05948") is None
+    assert identity.inheritance_for("claire-radar:2608.09548") is None
+
+
 def test_seed_inherits_gpqa_identity_and_leaves_near_matches_alone(
-    all_records: list[dict],
+    full_records: list[dict],
 ) -> None:
     """The checked-in seed resolves GPQA's donor and keeps mmbench-v1.1 a variant."""
     from benchmark_radar.catalog_identity import (
@@ -779,8 +996,8 @@ def test_seed_inherits_gpqa_identity_and_leaves_near_matches_alone(
         load_identity,
     )
 
-    identity = load_identity(all_records, DEFAULT_IDENTITY_PATH)
-    resolved = {r["key"]: r for r in apply_inherited_identity(all_records, identity)}
+    identity = load_identity(full_records, DEFAULT_IDENTITY_PATH)
+    resolved = {r["key"]: r for r in apply_inherited_identity(full_records, identity)}
 
     # An exact-name pair inherits identity and names its donor.
     gpqa = resolved["llm-stats:gpqa"]
@@ -796,7 +1013,7 @@ def test_seed_inherits_gpqa_identity_and_leaves_near_matches_alone(
 
 
 def test_all_twenty_one_exact_name_pairs_inherit_a_publisher_or_artifacts(
-    all_records: list[dict],
+    full_records: list[dict],
 ) -> None:
     """Every #262 exact-name recipient stops reading 'not established' somewhere."""
     from benchmark_radar.catalog_identity import (
@@ -805,8 +1022,8 @@ def test_all_twenty_one_exact_name_pairs_inherit_a_publisher_or_artifacts(
         load_identity,
     )
 
-    identity = load_identity(all_records, DEFAULT_IDENTITY_PATH)
-    resolved = {r["key"]: r for r in apply_inherited_identity(all_records, identity)}
+    identity = load_identity(full_records, DEFAULT_IDENTITY_PATH)
+    resolved = {r["key"]: r for r in apply_inherited_identity(full_records, identity)}
     recipients = [key for key in identity.inheritance_by_key if key.startswith("llm-stats:")]
     assert len(recipients) == 21
     for key in recipients:
@@ -820,12 +1037,36 @@ def test_all_twenty_one_exact_name_pairs_inherit_a_publisher_or_artifacts(
 
 
 @pytest.fixture(scope="module")
-def shard_inputs(normalized: dict, all_records: list[dict]) -> dict:
-    from benchmark_radar.catalog_identity import DEFAULT_IDENTITY_PATH, load_identity
+def shard_inputs(normalized: dict, all_records: list[dict], tmp_path_factory) -> dict:
+    from benchmark_radar.catalog_identity import load_identity
 
+    identity_path = _write_identity(
+        tmp_path_factory.mktemp("catalog-shard-identity"),
+        {
+            "schema_version": 1,
+            "equivalent": [
+                {
+                    "group_id": "gpqa",
+                    "basis": "reviewer_asserted",
+                    "members": ["llm-stats:gpqa", "opencompass:1135"],
+                    "inherit_from": "opencompass:1135",
+                    "anchors": ["arxiv:2311.12022", "gh:idavidrein/gpqa"],
+                    "reviewed_by": "ktwu01",
+                    "reviewed_at": "2026-08-22",
+                }
+            ],
+            "variants": [
+                {
+                    "of": "opencompass:516",
+                    "key": "opencompass:517",
+                    "relation": "split_sibling",
+                }
+            ],
+        },
+    )
     return {
         "records": all_records,
-        "identity": load_identity(all_records, DEFAULT_IDENTITY_PATH),
+        "identity": load_identity(all_records, identity_path),
         "series": normalized["score_series"],
         "observations": normalized["score_observations"],
     }
@@ -877,6 +1118,25 @@ def test_llm_stats_shard_carries_its_scores(shard_inputs: dict, tmp_path: Path) 
     block = shard["scores_by_source"]["llm_stats"]
     assert len(block["rows"]) == 239
     assert block["series"]["display_scale"] is None
+
+
+def test_series_without_observations_does_not_create_a_score_bucket() -> None:
+    from benchmark_radar.catalog_identity import IdentityIndex
+    from benchmark_radar.catalog_shards import build_shard
+
+    record = {
+        "key": "source:unscored",
+        "slug": "source-unscored",
+        "source": "source",
+    }
+    shard = build_shard(
+        record,
+        identity=IdentityIndex(),
+        series_by_key={record["key"]: {"key": record["key"], "observation_count": 0}},
+        observations_by_key={},
+    )
+
+    assert shard["scores_by_source"] == {}
 
 
 def test_opencompass_shard_has_empty_scores(shard_inputs: dict, tmp_path: Path) -> None:

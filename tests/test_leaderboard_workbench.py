@@ -292,6 +292,15 @@ def test_detail_panel_renders_for_any_selected_record():
     # The publisher keeps its role: the hub card publisher is not the creator.
     assert "publisherRoleLabel" in script
     assert "published the hub card" in script
+    identity = script.split("function catalogIdentityBlock(detail)", 1)[1].split(
+        "function catalogOpennessBlock", 1
+    )[0]
+    assert 't("Importer")' in identity
+    assert 't("Original evidence")' in identity
+    assert 't("Review status")' in identity
+    assert "provenance.review_state" in identity
+    assert 't("not reviewed")' not in identity
+    assert "detail.provenance" in identity
 
 
 def test_search_selection_updates_the_detail_panel():

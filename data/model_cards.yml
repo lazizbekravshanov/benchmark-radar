@@ -43,6 +43,52 @@
 
 schema_version: 1
 
+# Source documents for score extraction (non-card sources)
+source_documents:
+  - id: frontier_challenge_leaderboard_2026_08_25
+    name: FrontierChallenge leaderboard
+    publisher: ApodexAI
+    document_type: benchmark_leaderboard
+    url: https://apodexai.github.io/FrontierAgent/benchmarks/FrontierChallenge/
+    benchmarks: [frontier_challenge]
+    retrieved_at: 2026-09-02
+
+  # The four documents below are the benchmarks' own arXiv papers, treated as
+  # the leaderboard each benchmark's authors publish. Each reports a results
+  # table read directly out of the paper (no model card passes through it), so
+  # the rows they feed are benchmark_publisher_run measurements.
+  - id: jointavbench_v2_results_table
+    name: JointAVBench v2 results table
+    publisher: Renmin University of China
+    document_type: benchmark_leaderboard
+    url: https://arxiv.org/html/2512.12772v2
+    benchmarks: [jointavbench]
+    retrieved_at: 2026-09-18
+
+  - id: omnivideobench_v3_results_table
+    name: OmniVideoBench v3 results table
+    publisher: NJU-LINK (Nanjing University)
+    document_type: benchmark_leaderboard
+    url: https://arxiv.org/html/2510.10689v3
+    benchmarks: [omnivideobench]
+    retrieved_at: 2026-09-18
+
+  - id: asi_bench_results_table
+    name: ASI-Bench results table
+    publisher: Apexin AI
+    document_type: benchmark_leaderboard
+    url: https://arxiv.org/html/2608.17271v1
+    benchmarks: [asi_bench]
+    retrieved_at: 2026-09-18
+
+  - id: swe_bench_science_results_table
+    name: SWE-bench Science results table
+    publisher: OpenMOSS (Fudan University)
+    document_type: benchmark_leaderboard
+    url: https://arxiv.org/html/2608.19799v2
+    benchmarks: [swe_bench_science]
+    retrieved_at: 2026-09-18
+
 # Canonical benchmark records. `aliases` exist so a future extractor can map
 # vendor spellings ("SWE-bench-Verified", "SWE Bench Verified") onto one id
 # without changing the ids the leaderboard is built from.
@@ -1218,21 +1264,214 @@ benchmarks:
       arXiv proofs with planted errors; tests whether a model catches a broken
       argument instead of reproducing it.
 
+  - id: beyond_aime
+    name: BeyondAIME
+    aliases: ["BeyondAIME"]
+    domain: math
+    url: https://huggingface.co/datasets/ByteDance-Seed/BeyondAIME
+    caveat: >-
+      Beyond AIME difficulty competition math; most models score low and gaps
+      are dominated by run-to-run variance.
+
+  - id: phybench
+    name: PhyBench
+    aliases: ["PhyBench"]
+    domain: science
+    url: https://github.com/phybench-official/phybench
+    caveat: >-
+      Physics problem-solving benchmark; multi-step reasoning quality affects
+      the final answer.
+
+  - id: babe
+    name: BABE
+    aliases: ["BABE"]
+    domain: reasoning
+    url: https://arxiv.org/abs/2602.05857
+    caveat: >-
+      Biology Arena BEnchmark; measures experimental reasoning and causal
+      inference over peer-reviewed biological research papers.
+
+  - id: korbench
+    name: KORBench
+    aliases: ["KORBench"]
+    domain: reasoning
+    url: https://kor-bench.github.io/
+    caveat: >-
+      Knowledge-Orthogonal Reasoning Benchmark; evaluates intrinsic reasoning
+      and planning abilities while minimizing interference from pretrained knowledge.
+
+  - id: inverse_ifeval
+    name: Inverse IFEval
+    aliases: ["Inverse IFEval"]
+    domain: instruction_following
+    url: https://arxiv.org/abs/2509.04292
+    caveat: >-
+      Tests ability to override training biases and follow counterintuitive
+      instructions; complementary to IFEval.
+    released: 2025-09-04
+
+  - id: mars_bench
+    name: MARS-Bench
+    aliases: ["MARS-Bench"]
+    domain: reasoning
+    url: https://syuchin.github.io/MARS-Bench/
+    caveat: >-
+      Multi-turn dialogue benchmark built from sports commentary; evaluates
+      ultra multi-turn, cross-turn, and interactive multi-turn capabilities.
+
+  - id: multi_challenge
+    name: MultiChallenge
+    aliases: ["MultiChallenge"]
+    domain: reasoning
+    url: https://arxiv.org/abs/2501.17399
+    caveat: >-
+      Multi-turn instruction retention, graded by an LLM judge.
+
+  - id: collie
+    name: COLLIE
+    aliases: ["COLLIE"]
+    domain: reasoning
+    url: https://collie-benchmark.github.io/
+    caveat: >-
+      Systematic construction of constrained text generation tasks; evaluates
+      rich, compositional constraints across diverse generation levels.
+
+  - id: lpfqa
+    name: LPFQA
+    aliases: ["LPFQA"]
+    domain: knowledge
+    url: https://huggingface.co/datasets/m-a-p/LPFQA
+    caveat: >-
+      Long-tail professional forum-based benchmark; evaluates complex reasoning
+      across 20 academic and industrial fields with authentic professional scenarios.
+
+  - id: swe_lancer
+    name: SWE-Lancer
+    aliases: ["SWE-Lancer"]
+    domain: coding_agent
+    url: https://github.com/openai/frontier-evals/tree/main/project/swelancer
+    caveat: >-
+      Software engineering freelancer tasks from Upwork; real-world constraints
+      and client communication are part of the task.
+
+  - id: multi_swe_bench
+    name: Multi-SWE-Bench
+    aliases: ["Multi-SWE-Bench"]
+    domain: coding_agent
+    url: https://github.com/multi-swe-bench/multi-swe-bench/
+    caveat: >-
+      Multilingual SWE-bench variant spanning 7 programming languages;
+      cross-repository context transfer is the measured capability.
+
+  - id: sec_bench_pro
+    name: SEC-Bench Pro
+    aliases: ["SEC-Bench Pro"]
+    domain: security
+    url: https://github.com/sec-bench/sec-bench
+    caveat: >-
+      Security engineering benchmark; evaluates both vulnerability detection and
+      secure coding practices.
+
+  - id: exploitgym
+    name: ExploitGym
+    aliases: ["ExploitGym"]
+    domain: security
+    url: https://github.com/sunblaze-ucb/exploitgym
+    caveat: >-
+      Exploitation capability gym; different vulnerability classes have very
+      different difficulty profiles.
+
+  - id: zerobench
+    name: ZeroBench
+    aliases: ["ZeroBench", "ZeroBench-main"]
+    domain: multimodal
+    url: https://github.com/jonathan-roberts1/zerobench
+    caveat: >-
+      Challenging visual reasoning benchmark designed to be impossible for
+      frontier models at release; evaluates complex reasoning over images.
+  # Visual-generation evaluation, requested in issue #583: Ziqi Huang, VBench's
+  # first author, found none of this family in the registry.
+  # None of these carries a `released` date of its own. The registry treats
+  # that field as the benchmark's own publication date, and the arXiv listings
+  # that carry a day-precise one were not reachable when these were curated. A
+  # repository creation date is a different fact -- Evaluation Agent's repo
+  # predates its paper by two months -- so using one would put a date on the
+  # timeline that no source states.
+  #
+  # VBench is the exception, and it is not dated here either: the committed
+  # OpenCompass crawl already holds that record (opencompass:1375, released
+  # 2023-11-29, Nanyang Technological University), so `data/catalog/identity.yml`
+  # groups the two rows as one benchmark and names the crawl as the donor. The
+  # date and publisher arrive by inheritance, carrying a note that says where
+  # they came from, rather than being copied into this file unsourced. The
+  # other four have no such record; `data/catalog/benchmark_dates.yml` is where
+  # a reviewed paper-first-version date for them belongs once someone can check
+  # the listings (arXiv 2411.13503, 2503.21755, 2412.09645 and 2510.13759).
+
+  - id: vbench
+    name: VBench
+    aliases: ["VBench"]
+    domain: multimodal
+    url: https://github.com/Vchitect/VBench
+    caveat: >-
+      Sixteen dimensions folded into a Quality Score and a Semantic Score and
+      then into one Total Score. Every dimension is min-max normalized across
+      the models on the leaderboard at the time, so a total states a model's
+      standing within that pool rather than an absolute rate, and two totals
+      read from different leaderboard revisions are not the same measurement.
+
+  - id: vbench_plus_plus
+    name: VBench++
+    aliases: ["VBench++", "VBench-plus-plus"]
+    domain: multimodal
+    url: https://arxiv.org/abs/2411.13503
+    caveat: >-
+      Extends VBench to image-to-video generation and adds trustworthiness
+      dimensions, so its totals are computed over a different dimension set.
+      A VBench++ number is not a VBench number for the same model.
+
+  - id: vbench_2_0
+    name: VBench-2.0
+    aliases: ["VBench-2.0", "VBench 2.0", "VBench2.0"]
+    domain: multimodal
+    url: https://arxiv.org/abs/2503.21755
+    caveat: >-
+      Targets intrinsic faithfulness -- physics, commonsense and anatomy --
+      rather than the surface quality VBench 1.x measures, and is built to stay
+      unsaturated where that suite tops out. Low scores here do not contradict
+      high VBench scores; the two suites ask different questions.
+
+  - id: evaluation_agent
+    name: Evaluation Agent
+    aliases: ["Evaluation Agent", "Evaluation-Agent"]
+    domain: multimodal
+    url: https://github.com/Vchitect/Evaluation-Agent
+    caveat: >-
+      A promptable evaluation framework rather than a fixed test set: it plans
+      its own queries per model, so two runs need not ask the same questions.
+      It does report numbers -- an average score per round and the per-prompt
+      scores behind it -- but each is measured over the handful of prompts that
+      run chose for that model, so they describe the run rather than a scale
+      models can be ranked on.
+
+  - id: uni_mmmu
+    name: Uni-MMMU
+    aliases: ["Uni-MMMU", "UniMMMU"]
+    domain: multimodal
+    url: https://github.com/Vchitect/Uni-MMMU
+    caveat: >-
+      Eight tasks that couple understanding and generation, each scored on a
+      text channel and an image channel. One headline number hides which
+      channel earned it, and a model that only understands or only generates
+      is structurally capped on tasks that require both.
+
+
 # Model cards, technical reports and release posts.
 #
 # `organization` is the publisher of the document. `benchmarks` is the set of
 # canonical ids that document reports a result for. It is a set, not a ranking:
 # a card that reports AIME once and a card that reports it in four
 # configurations both contribute exactly one adoption.
-source_documents:
-  - id: frontier_challenge_leaderboard_2026_08_25
-    name: FrontierChallenge leaderboard
-    publisher: ApodexAI
-    document_type: benchmark_leaderboard
-    url: https://apodexai.github.io/FrontierAgent/benchmarks/FrontierChallenge/
-    benchmarks: [frontier_challenge]
-    retrieved_at: 2026-09-02
-
 model_cards:
   - id: openai_gpt_5_system_card
     organization: OpenAI
@@ -1978,6 +2217,71 @@ model_cards:
       - mcp_atlas
       - tool_decathlon
 
+  - id: bytedance_seed2_0_model_card
+    organization: ByteDance
+    model: Seed2.0 (Pro / Lite / Mini)
+    document_type: model_card
+    published: 2026-02-14
+    url: https://lf3-static.bytednsdoc.com/obj/eden-cn/lapzild-tss/ljhwZthlaukjlkulzlp/seed2/0214/Seed2.0%20Model%20Card.pdf
+    retrieved_at: 2026-09-11
+    # Transcribed from the model card PDF. The card reports extensive benchmarks
+    # across reasoning, math, science, coding, and agent capabilities.
+    benchmarks:
+      - aime
+      - hmmt
+      - beyond_aime
+      - imo_answer_bench
+      - gpqa_diamond
+      - mmlu_pro
+      - super_gpqa
+      - terminal_bench
+      - swe_bench_verified
+      - swe_lancer
+      - multi_swe_bench
+      - hle
+      - simpleqa
+      - healthbench
+      - arc_agi
+      - inverse_ifeval
+      - mars_bench
+      - multi_challenge
+      - collie
+      - lpfqa
+      - phybench
+      - babe
+      - korbench
+      - zerobench
+      - codeforces
+      - livecodebench
+
+  - id: deepseek_v4_1_flash_technical_report
+    organization: DeepSeek
+    model: DeepSeek-V4.1-Flash
+    document_type: technical_report
+    published: 2026-09-10
+    url: https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash/blob/main/DeepSeek_V41_Tech_Report.pdf
+    retrieved_at: 2026-09-11
+    # Transcribed from the technical report PDF and Hugging Face model card.
+    # The report focuses on KV cache compression architecture and reports
+    # comprehensive agentic and reasoning benchmarks.
+    benchmarks:
+      - gpqa_diamond
+      - hle
+      - codeforces
+      - matharena_apex_2025
+      - terminal_bench
+      - deepswe
+      - programbench
+      - nl2repo
+      - cybergym
+      - sec_bench_pro
+      - exploitgym
+      - automationbench
+      - agents_last_exam
+      - chartography
+      - babyvision
+      - zerobench
+
   - id: zai_glm_5_3_flash_model_card
     organization: Z.ai
     model: GLM-5.3-Flash
@@ -2088,3 +2392,4 @@ model_cards:
       - horizonmath
       - matharena_apex_2025
       - brokenarxiv
+

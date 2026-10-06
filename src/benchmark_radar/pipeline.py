@@ -4,7 +4,7 @@ import hashlib
 import json
 import math
 import re
-from collections import Counter
+from collections import defaultdict
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -12,7 +12,9 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from . import rubric
 from .attention import fetch_attention_feeds
+from .benchmark_attention import collect_benchmark_attention
 from .corpus import exact_artifact_keys
+from .describe import clean_card_text, strip_title_echo
 from .models import RadarItem, RadarRun, SourceHealth
 from .sources import FUTURE_TIMESTAMP_TOLERANCE, SOURCE_FETCHERS, collection_method
 
@@ -410,17 +412,44 @@ def apply_watchlist(
 BOILERPLATE_THRESHOLD = 3
 
 
+def _same_task_result_card_bodies(items: list[RadarItem]) -> bool:
+    suites = set()
+    for item in items:
+        owner, separator, repo = item.source_id.partition("/")
+        if item.source != "Hugging Face" or not owner or not separator or not repo:
+            return False
+        task = re.fullmatch(r"(.+[-_]results?[-_]task)[-_]?\d+", repo, re.IGNORECASE)
+        if task is None:
+            return False
+        body = strip_title_echo(
+            clean_card_text((item.raw or {}).get("description")), item.source_id
+        )
+        if not body or body != item.summary:
+            return False
+        suites.add((owner.casefold(), task.group(1).casefold()))
+    return len(suites) == 1
+
+
 def assert_no_boilerplate_summaries(items: list[RadarItem]) -> None:
     """Fail the run when a fetcher emits one summary for many different records.
 
-    A summary repeated across unrelated artifacts is templated text, not a
-    description. It misleads the reader and, because `score_item` reads
-    `summary`, it also inflates relevance for every record from that source.
+    Repetition alone cannot distinguish a generated template from one owner's
+    task-result cards. Allow repeated prose only for numbered task-result repos
+    in one owner's suite, with every summary matching its upstream card body.
+    Short-description placeholders
+    and unverified text still fail, because they can inflate relevance.
     This is a hard error rather than a warning: a silently boilerplated report
     looks successful, which is how the defect survived unnoticed before.
     """
-    counts = Counter(item.summary.strip().lower() for item in items if item.summary.strip())
-    repeated = {text: n for text, n in counts.items() if n >= BOILERPLATE_THRESHOLD}
+    groups: dict[str, list[RadarItem]] = defaultdict(list)
+    for item in items:
+        if item.summary.strip():
+            groups[item.summary.strip().lower()].append(item)
+    repeated = {
+        text: len(group)
+        for text, group in groups.items()
+        if len(group) >= BOILERPLATE_THRESHOLD and not _same_task_result_card_bodies(group)
+    }
     if repeated:
         worst = max(repeated.items(), key=lambda pair: pair[1])
         raise RuntimeError(
@@ -656,6 +685,8 @@ BACKFILL_SOURCES = {
     "openreview",
     "semantic_scholar",
     "crossref",
+    "datacite",
+    "openaire",
 }
 
 
@@ -697,7 +728,16 @@ def simulate_backfill(
             continue
         fetcher = SOURCE_FETCHERS[source_name]
         try:
-            fetched = fetcher(source_config, earliest_since, limit)
+            # Bound the fetch to the span being simulated, not to real now.
+            # A connector's upper bound comes from `_collection_now`, and with
+            # it absent every one of them queried "up to today" and then took
+            # its single newest page: for a historical span those rows are all
+            # recent, the per-date filter below discards every one of them, and
+            # the rows actually published inside the requested windows are
+            # never returned. A simulated day came out silently empty rather
+            # than visibly wrong.
+            fetch_config = {**source_config, "_collection_now": max(dates)}
+            fetched = fetcher(fetch_config, earliest_since, limit)
             fetch_health.append(
                 SourceHealth(
                     source=source_name,
@@ -763,6 +803,7 @@ def run_pipeline(
     now: datetime | None = None,
     *,
     previous_snapshot: dict[str, Any] | None = None,
+    snapshots: list[dict[str, Any]] | None = None,
 ) -> RadarRun:
     now = now or datetime.now(UTC)
     settings = config["radar"]
@@ -865,6 +906,23 @@ def run_pipeline(
         previous_observations=((previous_snapshot or {}).get("attention") or {}).get("observations")
         or [],
     )
+    # Ranking signals are observed for every release still inside the
+    # leaderboard's widest window, not only today's, so the counters of a
+    # three-week-old release keep moving. The history is the committed
+    # snapshots; a caller that only has the previous day's file still gets
+    # that day's releases observed.
+    history = snapshots if snapshots is not None else [previous_snapshot or {}]
+    attention_items = [
+        *(item for snapshot in history for item in snapshot.get("evidence_items") or []),
+        *(item.to_dict() for item in published),
+    ]
+    benchmark_attention, benchmark_attention_health = collect_benchmark_attention(
+        config.get("benchmark_attention") or {},
+        attention_items,
+        observed_at=now,
+        previous_block=(previous_snapshot or {}).get("benchmark_attention"),
+    )
+    attention_health = [*attention_health, *benchmark_attention_health]
     previous_streaks = ((previous_snapshot or {}).get("discovery_state") or {}).get(
         "source_failure_streaks"
     ) or {}
@@ -899,4 +957,5 @@ def run_pipeline(
             "attention": attention_state,
             "source_failure_streaks": failure_streaks,
         },
+        benchmark_attention=benchmark_attention,
     )

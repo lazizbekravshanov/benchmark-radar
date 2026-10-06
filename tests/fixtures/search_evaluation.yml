@@ -81,6 +81,11 @@ queries:
       - "llm-stats:legal-agent-benchmark"
       - "llm-stats:yc-bench"
       - "artificial-analysis:apex-agents-aa"
+      - "model-reports:swe_marathon"
+      - "claire-radar:2607.02255"
+      - "claire-radar:2608.06346"
+      - "claire-radar:2607.16610"
+      - "claire-radar:2608.05573"
 
   - id: topic-coding-benchmark
     kind: topical
@@ -94,6 +99,8 @@ queries:
       - "llm-stats:aider-polyglot-edit"
       - "llm-stats:scicode"
       - "llm-stats:aethercode"
+      - "model-reports:vibench"
+      - "claire-radar:github:bagheri365/evallab"
 
   - id: topic-medical-vqa
     kind: topical
@@ -110,7 +117,13 @@ queries:
     query: robotics manipulation
     intent: Retrieve benchmarks for robotic or embodied manipulation.
     scope: catalog
-    relevant_keys: ["llm-stats:robospatialhome"]
+    relevant_keys:
+      - "llm-stats:robospatialhome"
+      - "claire-radar:2605.27886"
+      - "claire-radar:2607.22119"
+      - "claire-radar:2608.18701"
+      - "claire-radar:2606.10382"
+      - "claire-radar:2609.05178"
 
   - id: topic-scientific-chart-fact-checking
     kind: topical
@@ -153,15 +166,14 @@ queries:
     intent: Detect whether the Catalog gains a full lexical match for this missing task.
     scope: catalog
     relevant_keys: []
-    expected_partial_keys: ["opencompass:2082", "opencompass:1542"]
+    expected_partial_keys: ["opencompass:2082", "claire-radar:2606.00451"]
 
-  - id: gap-weather-forecasting
-    kind: catalog_gap
+  - id: topic-weather-forecasting
+    kind: topical
     query: weather forecasting
-    intent: Detect whether the Catalog gains a full lexical match for this missing task.
+    intent: Retrieve benchmarks for weather forecasting tasks.
     scope: catalog
-    relevant_keys: []
-    expected_partial_keys: []
+    relevant_keys: ["claire-radar:2605.24945", "claire-radar:2606.02852"]
 
   - id: gap-stock-prediction
     kind: catalog_gap
@@ -171,10 +183,9 @@ queries:
     relevant_keys: []
     expected_partial_keys: ["llm-stats:cruxeval-output-cot"]
 
-  - id: gap-robot-grasp-planning
-    kind: catalog_gap
+  - id: topic-robot-grasp-planning
+    kind: topical
     query: robot grasp planning
-    intent: Detect whether the Catalog gains a full lexical match for this missing task.
+    intent: Retrieve benchmarks for robot grasp planning tasks.
     scope: catalog
-    relevant_keys: []
-    expected_partial_keys: ["opencompass:2151", "opencompass:1251"]
+    relevant_keys: ["claire-radar:2606.21011"]

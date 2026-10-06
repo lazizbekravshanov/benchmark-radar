@@ -1,6 +1,22 @@
+import tomllib
 from pathlib import Path
 
 import benchmark_radar
+
+
+def test_package_metadata_matches_the_current_release_and_title():
+    metadata = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["project"]
+    lock = tomllib.loads(Path("uv.lock").read_text(encoding="utf-8"))
+    locked_package = next(
+        package for package in lock["package"] if package["name"] == metadata["name"]
+    )
+
+    assert metadata["version"] == "0.11.0"
+    assert benchmark_radar.__version__ == metadata["version"]
+    assert locked_package["version"] == metadata["version"]
+    assert metadata["description"] == (
+        "Benchmark Radar: A Living Database and Search Engine for AI Benchmarks and Evaluation"
+    )
 
 
 def test_tests_import_this_checkouts_source():

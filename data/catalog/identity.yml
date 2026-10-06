@@ -10,15 +10,9 @@
 # regenerates identity_candidates.yml beside this file, and a reviewer promotes
 # proven groups here.
 #
-# A group carrying `basis: reviewer_asserted` is the hand-reviewed case the
-# two-anchor bar was never meant to govern. llm-stats carries no artifacts and
-# therefore no anchor, so no llm-stats-to-OpenCompass equivalence can ever clear
-# two machine anchors -- yet a reviewer reading both cards can still confirm the
-# two rows are one instrument. There the reviewer is one independent warrant and
-# the donor's own artifact is the second, so the loader drops the floor to a
-# single donor anchor and requires reviewed_by / reviewed_at in return. The
-# `anchors` listed on such a group are the DONOR's artifacts that ground the
-# identity, not anchors shared with llm-stats.
+# A group carrying `basis: reviewer_asserted` is a hand-reviewed case that may
+# use one shared anchor or one member's artifact plus the review warrant. The
+# loader requires reviewed_by / reviewed_at and at least one listed anchor.
 #
 # `inherit_from` names the member whose publisher, artifacts, release date, size
 # and openness the other members may display when they carry none of their own
@@ -28,14 +22,29 @@
 # never touches scores: the two rows stay two rows and no series joins another.
 schema_version: 1
 
-# Same instrument across the two crawls, confirmed by hand. Each group pairs a
-# score-dense llm-stats record (which supplies the scores and no identity) with
-# the OpenCompass record of the same benchmark (which supplies the identity and
-# no scores), and names the OpenCompass record as the `inherit_from` donor. The
-# 21 pairs below are #262's exact-name bucket, each verified against both cards
-# before it was written; the two rows with a single donor anchor (ARC-c, paper
-# only; RealworldQA, dataset only) are asserted on the same reviewer warrant.
 equivalent:
+  # Reviewed source-preserving links for the Claire import. These groups expose
+  # siblings only: neither record inherits fields or scores from the other.
+  - group_id: claire-gauge-2608-05948
+    basis: reviewer_asserted
+    members: [claire-radar:2608.05948, opencompass:2574]
+    anchors: [arxiv:2608.05948]
+    reviewed_by: ktwu01
+    reviewed_at: 2026-09-27
+    note: >-
+      Both records identify the GAUGE benchmark introduced by arXiv:2608.05948.
+      The other Claire record named GAUGE cites arXiv:2607.24889 and remains separate.
+
+  - group_id: claire-elbench-2608-09548
+    basis: reviewer_asserted
+    members: [claire-radar:2608.09548, opencompass:2571]
+    anchors: [hf:zeroloss-lab/elbench]
+    reviewed_by: ktwu01
+    reviewed_at: 2026-09-27
+    note: Both records identify ELBench through the ZeroLoss-Lab/ELBench dataset.
+
+  # Same instrument across the two crawls, confirmed by hand. These 21 groups
+  # pair score-dense llm-stats records with identity-rich OpenCompass records.
   - group_id: gpqa
     basis: reviewer_asserted
     members: [llm-stats:gpqa, opencompass:1135]

@@ -18,6 +18,7 @@ SOURCE_LABELS = {
     "llm_stats": "LLM Stats",
     "artificial_analysis": "Artificial Analysis",
     "opencompass_hub": "OpenCompass Hub",
+    "claire_radar": "Claire Radar",
 }
 
 

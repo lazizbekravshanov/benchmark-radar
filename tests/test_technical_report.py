@@ -26,7 +26,8 @@ def test_built_pdf_is_tracked_so_the_report_reads_on_github() -> None:
 
 
 def test_manuscript_records_contributor_names_and_affiliations() -> None:
-    source = MANUSCRIPT.read_text(encoding="utf-8")
+    # The manuscript ties multi-word names together with LaTeX non-breaking spaces.
+    source = MANUSCRIPT.read_text(encoding="utf-8").replace("~", " ")
 
     for author in ("Koutian Wu", "Junjie Zhou", "Ergan Shang", "Jiayu Wang", "Pengqian Han"):
         assert author in source

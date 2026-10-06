@@ -86,6 +86,14 @@ def test_opencompass_source_text_makes_opaque_names_discoverable() -> None:
     ]
 
 
+def test_chinese_source_description_finds_afqmc() -> None:
+    # The OpenCompass description names the Chinese semantic-similarity task
+    # in Chinese, even though its display name is only an acronym.
+    result = QueryService().search("中文语义", scope="catalog", limit=5)
+    assert result["search_status"] == "full_matches_found"
+    assert "opencompass:506" in {item["key"] for item in result["results"]}
+
+
 def test_single_token_name_search_never_returns_an_empty_token_explanation() -> None:
     result = QueryService().search("CASP", scope="all", limit=20)
 

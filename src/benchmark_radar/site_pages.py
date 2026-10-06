@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from .feed import SITE_URL
 from .site_shell import SOURCE_LABELS, website_reference
@@ -204,7 +205,7 @@ def _title(
         if label:
             base = f"{base} ({label})"
     facets = [_ARTIFACT_LABELS[kind] for kind in _facet_kinds(artifacts)]
-    if scores_by_source:
+    if _score_count(scores_by_source):
         facets.append("Results")
     detail = _join_words(facets) if facets else "What It Tests"
     return f"{base}: {detail} | Benchmark Radar"
@@ -306,7 +307,11 @@ def _facts(record: dict[str, Any], scores_by_source: dict[str, Any]) -> list[tup
         facts.append(("Openness", status))
     label = _source_label(record)
     if label:
-        facts.append(("Catalog source", label))
+        facts.append(("Importer", label))
+    provenance = record.get("provenance") or {}
+    review_state = provenance.get("review_state")
+    if isinstance(review_state, str) and review_state.strip():
+        facts.append(("Review status", review_state.strip()))
     facts.append(("Reported scores", str(_score_count(scores_by_source))))
     return facts
 
@@ -392,6 +397,30 @@ def _scores_sections(scores_by_source: dict[str, Any]) -> str:
             f"<tbody>{body}</tbody></table></section>"
         )
     return "".join(sections)
+
+
+def _http_url(value: Any) -> str | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    clean = value.strip()
+    try:
+        parsed = urlsplit(clean)
+    except ValueError:
+        return None
+    return clean if parsed.scheme in {"http", "https"} and parsed.netloc else None
+
+
+def _provenance_section(record: dict[str, Any]) -> str:
+    provenance = record.get("provenance") or {}
+    clean = _http_url(provenance.get("source_url"))
+    if not clean:
+        return ""
+    return (
+        '<section><h2>Source provenance</h2><ul class="links"><li>'
+        '<span class="artifact-kind">Original evidence</span> '
+        f'<a href="{_esc(clean)}" rel="nofollow noopener">{_esc(clean)}</a>'
+        "</li></ul></section>"
+    )
 
 
 def _artifacts_section(name: str, artifacts: list[tuple[str, str, str]]) -> str:
@@ -509,6 +538,7 @@ def _page_html(slug: str, shard: dict[str, Any], context: CatalogContext | None 
         f"<section><h2>What is {_esc(name)}?</h2>"
         f'<p class="lede">{_esc(description)}</p>'
         f"<dl>{facts}</dl></section>"
+        f"{_provenance_section(record)}"
         f"{_artifacts_section(name, artifacts)}"
         f"{scores_html}"
         f"{_documents_section(name, record)}"

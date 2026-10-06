@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "benchmark-radar"
-version = "0.9.0"
-description = "Daily evidence-first radar for AI benchmarks, evaluations, datasets, and data quality."
+version = "0.11.0"
+description = "Benchmark Radar: A Living Database and Search Engine for AI Benchmarks and Evaluation"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }

@@ -13,9 +13,10 @@ from pathlib import Path
 from typing import Any
 
 from .citation import citation_block
+from .science_domains import science_domains_for_record
 from .snapshots import REQUIRED_SOURCES, load_snapshots
 
-QUERY_SCHEMA_VERSION = 6
+QUERY_SCHEMA_VERSION = 7
 DEFAULT_INDEX_PATH = Path("site/data/benchmark-index.json")
 DEFAULT_SHARD_DIR = Path("site/data/benchmarks")
 DEFAULT_SNAPSHOT_DIR = Path("data/snapshots")
@@ -43,6 +44,18 @@ _BM25_K1 = 1.2
 _BM25_B = 0.75
 _NAME_MATCH_MULTIPLIERS = (3.0, 1.5, 0.75)
 _PHRASE_MULTIPLIER = 0.5
+# Han ideographs plus hiragana and katakana, which share unspaced text with Han.
+_CJK_CHARS = (
+    r"\u3005\u3041-\u309f\u30a1-\u30fa\u30fc-\u30ff\u31f0-\u31ff"
+    r"\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff"
+)
+# Latin letters outside ASCII are left out of the word alternative so Latin text
+# keeps its original ASCII tokens, and English scores stay unchanged.
+_LATIN_EXTENDED = r"\u00c0-\u02af\u1e00-\u1eff\u2c60-\u2c7f\ua720-\ua7ff\uab30-\uab6f"
+_TOKEN_PARTS = re.compile(
+    rf"[a-z0-9]+|(?P<cjk>[{_CJK_CHARS}]+)"
+    rf"|(?:(?![{_CJK_CHARS}{_LATIN_EXTENDED}])[^\W\d_])+"
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -123,7 +136,21 @@ def _validate_index_record(record: dict[str, Any], *, position: int) -> None:
 
 def _tokens(value: Any) -> tuple[str, ...]:
     normalized = unicodedata.normalize("NFKD", str(value or "")).casefold()
-    return tuple(re.findall(r"[a-z0-9]+", normalized))
+    tokens: list[str] = []
+    for match in _TOKEN_PARTS.finditer(normalized):
+        part = match.group()
+        if match.lastgroup == "cjk":
+            # Han and kana text has no spaces between words. Adjacent character
+            # pairs let a short query find a longer source description without
+            # treating every shared single character as a strong match. NFKD
+            # split voiced kana such as が from their marks, so recompose first.
+            part = unicodedata.normalize("NFC", part)
+            tokens.extend(part[index : index + 2] for index in range(len(part) - 1))
+            if len(part) == 1:
+                tokens.append(part)
+        else:
+            tokens.append(part)
+    return tuple(tokens)
 
 
 def _field_text(value: Any) -> str:
@@ -153,6 +180,8 @@ class _SearchDocument:
     record: dict[str, Any]
     field_tokens: dict[str, tuple[str, ...]]
     field_counts: dict[str, Counter[str]]
+    field_ascii_lengths: dict[str, int]
+    field_unicode_lengths: dict[str, int]
     all_tokens: frozenset[str]
 
 
@@ -161,12 +190,14 @@ class _SearchCorpus:
     documents: tuple[_SearchDocument, ...]
     document_frequency: Counter[str]
     average_field_lengths: dict[str, float]
+    average_unicode_field_lengths: dict[str, float]
 
 
 def _build_search_corpus(records: list[dict[str, Any]]) -> _SearchCorpus:
     documents: list[_SearchDocument] = []
     document_frequency: Counter[str] = Counter()
     total_field_lengths: Counter[str] = Counter()
+    total_unicode_field_lengths: Counter[str] = Counter()
     for record in records:
         field_tokens = {field: _tokens(_field_text(record.get(field))) for field in _FIELD_ORDER}
         # Registered aliases are name evidence for every source. Keep the
@@ -176,14 +207,24 @@ def _build_search_corpus(records: list[dict[str, Any]]) -> _SearchCorpus:
                 _field_text(record.get("name")) + " " + _field_text(record["aliases"])
             )
         field_counts = {field: Counter(tokens) for field, tokens in field_tokens.items()}
+        ascii_lengths = {
+            field: sum(token.isascii() for token in tokens)
+            for field, tokens in field_tokens.items()
+        }
+        unicode_lengths = {
+            field: len(tokens) - ascii_lengths[field] for field, tokens in field_tokens.items()
+        }
         all_tokens = frozenset().union(*(set(tokens) for tokens in field_tokens.values()))
         document_frequency.update(all_tokens)
-        total_field_lengths.update({field: len(tokens) for field, tokens in field_tokens.items()})
+        total_field_lengths.update(ascii_lengths)
+        total_unicode_field_lengths.update(unicode_lengths)
         documents.append(
             _SearchDocument(
                 record=record,
                 field_tokens=field_tokens,
                 field_counts=field_counts,
+                field_ascii_lengths=ascii_lengths,
+                field_unicode_lengths=unicode_lengths,
                 all_tokens=all_tokens,
             )
         )
@@ -191,7 +232,11 @@ def _build_search_corpus(records: list[dict[str, Any]]) -> _SearchCorpus:
     averages = {
         field: total_field_lengths[field] / count if count else 0.0 for field in _FIELD_ORDER
     }
-    return _SearchCorpus(tuple(documents), document_frequency, averages)
+    unicode_averages = {
+        field: total_unicode_field_lengths[field] / count if count else 0.0
+        for field in _FIELD_ORDER
+    }
+    return _SearchCorpus(tuple(documents), document_frequency, averages, unicode_averages)
 
 
 def _idf(term: str, corpus: _SearchCorpus) -> float:
@@ -233,10 +278,16 @@ def _bm25f_score(
             frequency = document.field_counts[field][term]
             if not frequency:
                 continue
-            average_length = corpus.average_field_lengths[field] or 1.0
-            length_normalization = (
-                1.0 - _BM25_B + _BM25_B * (len(document.field_tokens[field]) / average_length)
-            )
+            # CJK bigrams expand descriptions that were invisible to English
+            # search. Keep ASCII length normalization on its original token
+            # population so adding Unicode support does not reorder English hits.
+            if term.isascii():
+                field_length = document.field_ascii_lengths[field]
+                average_length = corpus.average_field_lengths[field] or 1.0
+            else:
+                field_length = document.field_unicode_lengths[field]
+                average_length = corpus.average_unicode_field_lengths[field] or 1.0
+            length_normalization = 1.0 - _BM25_B + _BM25_B * (field_length / average_length)
             weighted_frequency += _FIELD_WEIGHTS[field] * frequency / length_normalization
         if weighted_frequency:
             score += _idf(term, corpus) * (
@@ -416,6 +467,12 @@ class QueryService:
         self._validated_shards = index["count"]
         return self._validated_shards
 
+    def validated_catalog_index(self) -> dict[str, Any]:
+        """Return the catalog index after validating its records and detail shards."""
+        index = self._load_index()
+        self._validate_detail_shards()
+        return index
+
     def _radar_candidates(self) -> list[dict[str, Any]]:
         latest_by_identity: dict[tuple[str, str], dict[str, Any]] = {}
         for snapshot in self._load_snapshots():
@@ -430,6 +487,12 @@ class QueryService:
                     "name": str(item.get("title") or ""),
                     "description": str(item.get("summary") or ""),
                     "categories": list(item.get("categories") or []),
+                    # Derived here rather than copied from the snapshot:
+                    # stored snapshots predate the field, so a plain copy
+                    # would hand every historical record an empty list on
+                    # this surface while radar.json showed tags (issue #511
+                    # review BLOCKER). Same function, same output.
+                    "science_domains": science_domains_for_record(item),
                     "publisher": " ".join(item.get("organizations") or []),
                     "modality": None,
                     "languages": [],
@@ -681,7 +744,9 @@ class QueryService:
                 continue
             if recommended and item.get("recommended") is not True:
                 continue
-            results.append(item)
+            # Same derivation the dashboard publishes, so `recent` and
+            # `search` cannot disagree about a record's domains.
+            results.append({**item, "science_domains": science_domains_for_record(item)})
         results = results[:limit]
         return {
             "schema_version": QUERY_SCHEMA_VERSION,

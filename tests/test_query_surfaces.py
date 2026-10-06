@@ -18,7 +18,7 @@ from benchmark_radar.citation import (
     latex_citation,
 )
 from benchmark_radar.models import RadarItem, RadarRun, SourceHealth
-from benchmark_radar.query import QueryError, QueryPaths, QueryService
+from benchmark_radar.query import QueryError, QueryPaths, QueryService, _tokens
 from benchmark_radar.query_cli import run_query_cli
 from benchmark_radar.query_http import create_query_server
 from benchmark_radar.snapshots import write_snapshot
@@ -137,6 +137,69 @@ def _catalog(tmp_path: Path) -> QueryPaths:
     return QueryPaths(index=index_path, shards=shard_dir, snapshots=snapshot_dir)
 
 
+def test_search_and_detail_expose_reviewed_identity_siblings(tmp_path: Path) -> None:
+    paths = _catalog(tmp_path)
+    index = json.loads(paths.index.read_text(encoding="utf-8"))
+    related = {
+        "slug": "claire-agent-workbench",
+        "key": "claire-radar:agent-workbench",
+        "name": "Agent Workbench",
+        "source": "claire_radar",
+        "publisher": None,
+        "released": None,
+        "openness": "unknown",
+        "modality": "text",
+        "description": "Imported source record for the same reviewed benchmark identity.",
+        "categories": ["agent", "coding"],
+        "languages": [],
+        "score_count": 0,
+        "has_paper": True,
+        "has_repo": False,
+        "has_dataset": False,
+        "has_size": False,
+    }
+    index["benchmarks"].append(related)
+    index["count"] += 1
+    paths.index.write_text(json.dumps(index), encoding="utf-8")
+    (paths.shards / f"{related['slug']}.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "record": related,
+                "siblings": [
+                    {
+                        "key": "opencompass:agent-workbench",
+                        "slug": "opencompass-agent-workbench",
+                        "name": "Agent Workbench",
+                        "source": "opencompass_hub",
+                        "relation": "equivalent",
+                    }
+                ],
+                "scores_by_source": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    service = QueryService(paths)
+    search = service.search("Agent Workbench", scope="catalog", limit=10)
+    detail = service.show("claire-radar:agent-workbench")
+
+    assert {row["key"] for row in search["results"]} >= {
+        "claire-radar:agent-workbench",
+        "opencompass:agent-workbench",
+    }
+    assert detail["benchmark"]["siblings"] == [
+        {
+            "key": "opencompass:agent-workbench",
+            "slug": "opencompass-agent-workbench",
+            "name": "Agent Workbench",
+            "source": "opencompass_hub",
+            "relation": "equivalent",
+        }
+    ]
+
+
 def test_catalog_search_is_deterministic_and_explains_matches(tmp_path: Path) -> None:
     # Regression: interface-specific ranking would let CLI and HTTP disagree.
     service = QueryService(_catalog(tmp_path))
@@ -164,6 +227,61 @@ def test_catalog_search_is_deterministic_and_explains_matches(tmp_path: Path) ->
     assert result["results"][0]["match"]["retrieval_score"] > 0
     assert result["results"][0]["match"]["idf_coverage"] == pytest.approx(1.0)
     assert result["data"]["catalog_count"] == 3
+
+
+def test_catalog_search_accepts_chinese_terms_present_in_source_text(tmp_path: Path) -> None:
+    # OpenCompass descriptions contain Chinese evidence that ASCII-only tokens hid.
+    paths = _catalog(tmp_path)
+    index = json.loads(paths.index.read_text(encoding="utf-8"))
+    index["benchmarks"][0]["description"] = "中文语义相似度评测。"
+    paths.index.write_text(json.dumps(index), encoding="utf-8")
+
+    result = QueryService(paths).search("中文语义", scope="catalog")
+
+    assert result["search_status"] == "full_matches_found"
+    assert result["results"][0]["key"] == "opencompass:agent-workbench"
+    assert result["results"][0]["match"]["matched_tokens"] == ["中文", "文语", "语义"]
+
+
+def test_chinese_description_does_not_reweight_english_search(tmp_path: Path) -> None:
+    paths = _catalog(tmp_path)
+    baseline = QueryService(paths).search("agent workbench", scope="catalog")
+    index = json.loads(paths.index.read_text(encoding="utf-8"))
+    index["benchmarks"][2]["description"] += " 中文语义相似度评测。"
+    paths.index.write_text(json.dumps(index), encoding="utf-8")
+
+    after = QueryService(paths).search("agent workbench", scope="catalog")
+    assert [item["key"] for item in after["results"]] == [
+        item["key"] for item in baseline["results"]
+    ]
+    assert [item["match"]["retrieval_score"] for item in after["results"]] == [
+        item["match"]["retrieval_score"] for item in baseline["results"]
+    ]
+
+
+def test_kana_before_han_does_not_hide_the_han_phrase(tmp_path: Path) -> None:
+    # A generic letter run starting at kana used to swallow the following Han
+    # characters into one token, so a Japanese description never matched them.
+    paths = _catalog(tmp_path)
+    index = json.loads(paths.index.read_text(encoding="utf-8"))
+    index["benchmarks"][0]["description"] = "ひらがなで書かれた中文語義の評価。"
+    paths.index.write_text(json.dumps(index), encoding="utf-8")
+
+    for query in ("中文語義", "ひらがな"):
+        result = QueryService(paths).search(query, scope="catalog")
+        assert result["search_status"] == "full_matches_found"
+        assert result["results"][0]["key"] == "opencompass:agent-workbench"
+    assert _tokens("ひらがな") == ("ひら", "らが", "がな")
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [("Łódź", ("o", "dz")), ("Ørsted", ("rsted",)), ("café Straße", ("cafe", "strasse"))],
+)
+def test_latin_text_keeps_ascii_tokens(text: str, expected: tuple[str, ...]) -> None:
+    # Non-ASCII Latin letters must not start new tokens; English scores depend
+    # on the ASCII token population staying the same as before Unicode support.
+    assert _tokens(text) == expected
 
 
 @pytest.mark.parametrize("source", ["model_reports", "llm_stats", "artificial_analysis"])
@@ -331,6 +449,47 @@ def test_recent_and_status_report_snapshot_health(tmp_path: Path) -> None:
     assert status["radar"]["required_coverage_complete"] is True
 
 
+def test_radar_results_carry_derived_science_domains(tmp_path: Path) -> None:
+    # Issue #511 review BLOCKER: stored snapshots predate the field, so the
+    # query surface must derive domains from record text -- a plain field
+    # copy would return [] for every historical record and still pass a
+    # "field exists" test. These assertions require the actual tag value.
+    paths = _catalog(tmp_path)
+    generated_at = datetime(2026, 8, 30, 8, 0, tzinfo=UTC)
+    write_snapshot(
+        RadarRun(
+            generated_at=generated_at,
+            since=generated_at - timedelta(hours=48),
+            items=[
+                RadarItem(
+                    source="arXiv",
+                    source_id="2608.17345",
+                    title="BrainBench: Benchmarking Large Language Models for "
+                    "Comprehensive EEG Understanding",
+                    url="https://arxiv.org/abs/2608.17345",
+                    published_at=generated_at - timedelta(hours=2),
+                    summary="A real corpus title replayed by the shared derivation.",
+                    categories=["benchmark", "evaluation"],
+                )
+            ],
+            health=[
+                SourceHealth(source=source, ok=True, item_count=1, method="API")
+                for source in ("arxiv", "github", "huggingface")
+            ],
+        ),
+        paths.snapshots,
+    )
+    service = QueryService(paths)
+
+    recent = service.recent(limit=5)
+    searched = service.search("brainbench", scope="radar", limit=5)
+
+    assert recent["schema_version"] == 7
+    assert recent["results"][0]["science_domains"] == ["neuroscience"]
+    radar_hits = [record for record in searched["results"] if record["kind"] == "radar"]
+    assert radar_hits and radar_hits[0]["science_domains"] == ["neuroscience"]
+
+
 def test_status_exposes_incomplete_detail_shards(tmp_path: Path) -> None:
     # Regression: counting only the index used to hide absent detail artifacts.
     paths = _catalog(tmp_path)
@@ -480,7 +639,7 @@ def test_healthz_identifies_local_health_check_contract(tmp_path: Path) -> None:
         thread.join(timeout=5)
 
     assert payload == {
-        "schema_version": 6,
+        "schema_version": 7,
         "retrieval_mode": "health_check",
         "data": {"source": "local", "citation": citation_block()},
         "status": "ok",
@@ -562,7 +721,7 @@ def test_http_errors_are_machine_readable(tmp_path: Path) -> None:
 
     assert captured.value.code == 400
     assert payload == {
-        "schema_version": 6,
+        "schema_version": 7,
         "error": {"code": "invalid_request", "message": "q is required"},
     }
 

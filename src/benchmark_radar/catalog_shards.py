@@ -57,7 +57,7 @@ def _scores_by_source(
     key = record["key"]
     series = series_by_key.get(key)
     rows = observations_by_key.get(key)
-    if not series and not rows:
+    if not rows:
         return {}
     return {
         record["source"]: {

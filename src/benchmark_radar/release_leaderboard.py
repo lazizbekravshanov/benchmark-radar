@@ -36,6 +36,7 @@ import yaml
 from .catalog_identity import DEFAULT_IDENTITY_PATH
 from .catalog_overrides import DEFAULT_LLM_STATS_IDENTITY_OVERRIDES_PATH
 from .corpus import artifact_alias_map, exact_artifact_key
+from .describe import release_headline
 from .model_cards import DEFAULT_REGISTRY_PATH
 
 METHOD_VERSION = "attention-ranking-v1"
@@ -472,11 +473,14 @@ def filter_release_cohort(
             {
                 "canonical_artifact_id": canonical_id,
                 "name": name,
-                "purpose": (
-                    primary_item.get("summary")
-                    or primary_item.get("title")
-                    or "Benchmark and evaluation suite"
-                ),
+                # A derived one-line summary, or "" when the source published
+                # nothing a line could be drawn from (issue #348). The chain
+                # here used to fall back to the title and then to the literal
+                # "Benchmark and evaluation suite", which told a reader nothing
+                # the row's own name and chips did not already say, and
+                # contradicts `describe.py`'s rule that callers treat "" as
+                # "no description available" rather than substituting filler.
+                "purpose": release_headline(primary_item.get("summary"), name),
                 "release_date": earliest_dt.isoformat(),
                 "has_dated_attention": has_attention,
                 "is_reviewed_benchmark": is_reviewed,

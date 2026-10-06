@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 
+from benchmark_radar.describe import MAX_HEADLINE_CHARS
 from benchmark_radar.release_leaderboard import (
     METHOD_VERSION,
     build_latest_releases_leaderboard,
@@ -1042,3 +1043,90 @@ def test_stale_values_are_displayed_but_do_not_change_score_order():
     stale = next(entry for entry in entries if entry["name"] == "Stale context")
     assert stale["components"]["hf_paper_upvotes"]["value"] == 1_000
     assert stale["components"]["hf_paper_upvotes"]["status"] == "stale"
+
+
+def test_a_release_carries_a_derived_one_line_purpose_or_an_honest_empty_one():
+    """Issue #348: every row says what it measures, or says nothing at all.
+
+    The chain here used to be the raw source summary, else the title, else the
+    literal "Benchmark and evaluation suite". The first put a 1,400-character
+    abstract in a one-line slot, the second repeated the name the row already
+    shows, and the third told the reader nothing while reading like a
+    description -- which is also what `describe.py` exists to prevent.
+    """
+    generated_at = datetime(2026, 9, 10, 9, 0, tzinfo=UTC)
+    released = (generated_at - timedelta(days=3)).isoformat()
+    items = [
+        {
+            "id": "long",
+            "url": "https://github.com/org/long-bench",
+            "title": "Long Bench",
+            "event_kind": "released",
+            "discovered_at": released,
+            "published_at": released,
+            "source": "GitHub",
+            "source_id": "org/long-bench",
+            "summary": (
+                "Abstract Multimodal medical imaging is fundamental to modern diagnosis. "
+                "We introduce LongBench, a benchmark of 2,197 segmentation cases drawn "
+                "from fourteen public sources, which was assembled over four years at a "
+                "tertiary referral centre with consecutive enrolment throughout."
+            ),
+        },
+        {
+            "id": "bare",
+            "url": "https://github.com/org/bare-bench",
+            "title": "Bare Bench",
+            "event_kind": "released",
+            "discovered_at": released,
+            "published_at": released,
+            "source": "GitHub",
+            "source_id": "org/bare-bench",
+        },
+    ]
+    snapshots = [make_snapshot("2026-09-01", generated_at.isoformat(), evidence_items=items)]
+
+    cohort = filter_release_cohort(
+        snapshots, window_days=30, as_of=generated_at, include_unconfirmed=True
+    )
+    by_id = {entry["canonical_artifact_id"]: entry for entry in cohort}
+
+    # The scaffolding goes, the sentence that names the artifact is chosen over
+    # the abstract's opening motivation, and the subordinate clause is cut.
+    long_purpose = by_id["artifact:github:org/long-bench"]["purpose"]
+    assert long_purpose == (
+        "We introduce LongBench, a benchmark of 2,197 segmentation cases drawn from "
+        "fourteen public sources\u2026"
+    )
+    assert len(long_purpose) <= MAX_HEADLINE_CHARS
+    # The cut is marked, so a reader cannot take the trimmed line for the whole
+    # of what the source said.
+    assert long_purpose.endswith("\u2026")
+
+    # A release whose source published no prose gets an empty purpose, not its
+    # own title back and not a template. The renderer shows its empty state.
+    bare = by_id["artifact:github:org/bare-bench"]
+    assert bare["purpose"] == ""
+    assert bare["name"] == "Bare Bench"
+
+    # The release name reaches `release_headline`, which is what lets it refuse
+    # a line that only repeats the row's own name. Pinned here because a
+    # mutation dropping the argument keeps every other assertion green.
+    echo = {
+        "id": "echo",
+        "url": "https://github.com/org/echo-bench",
+        "title": "Echo Bench",
+        "event_kind": "released",
+        "discovered_at": released,
+        "published_at": released,
+        "source": "GitHub",
+        "source_id": "org/echo-bench",
+        "summary": "Echo Bench",
+    }
+    echo_cohort = filter_release_cohort(
+        [make_snapshot("2026-09-01", generated_at.isoformat(), evidence_items=[echo])],
+        window_days=30,
+        as_of=generated_at,
+        include_unconfirmed=True,
+    )
+    assert echo_cohort[0]["purpose"] == ""

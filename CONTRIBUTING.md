@@ -61,7 +61,15 @@ benchmark from sitting near the top with no qualification. Write what would
 mislead someone comparing two reported numbers, for example a small split with
 wide variance, or a score that depends on scaffold and tool access.
 
-The full maintenance contract is documented at the top of
+If the document reports numbers you can read directly from it, add those too.
+They do not go in the adoption registry, which stores a mention and never a
+score. They go in [`data/benchmark_scores.yml`](data/benchmark_scores.yml), the
+matched score archive, where each row cites the document it was read from.
+
+The complete procedure for all of this, including the score fields and the
+checks the loader enforces, is
+[`docs/sop-add-model-cards.md`](docs/sop-add-model-cards.md). The maintenance
+contract is also documented at the top of
 [`data/model_cards.yml`](data/model_cards.yml).
 
 ## What this project will not accept
@@ -115,6 +123,16 @@ current output.
 
 Commits are atomic: one logical change each. Keep unrelated fixes in separate
 commits.
+
+## Open item limit / 未关闭数量上限
+
+One author can have at most **10 open issues and pull requests combined**. A
+new one past that is closed automatically with a note, and can be reopened once
+earlier ones are merged or closed. Maintainers are exempt. Pick the few changes
+that matter most and finish them, rather than opening many small ones at once.
+
+同一位作者同时最多保留 **10 个未关闭的 issue 和 PR（合计）**。超出的会被自动关闭并附说明，
+待之前的被合并或关闭后可重新打开。维护者不受限制。请优先完成最重要的几个，不要一次性提交大量小改动。
 
 ## Reporting data errors
 

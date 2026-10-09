@@ -10,12 +10,17 @@ import unicodedata
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from .citation import citation_block
+from .citation import citation_block, required_citations
+from .corpus import exact_artifact_key
+from .science_domains import science_domains_for_record
 from .snapshots import REQUIRED_SOURCES, load_snapshots
 
-QUERY_SCHEMA_VERSION = 6
+if TYPE_CHECKING:
+    from .related_work import ManuscriptContext
+
+QUERY_SCHEMA_VERSION = 7
 DEFAULT_INDEX_PATH = Path("site/data/benchmark-index.json")
 DEFAULT_SHARD_DIR = Path("site/data/benchmarks")
 DEFAULT_SNAPSHOT_DIR = Path("data/snapshots")
@@ -43,6 +48,18 @@ _BM25_K1 = 1.2
 _BM25_B = 0.75
 _NAME_MATCH_MULTIPLIERS = (3.0, 1.5, 0.75)
 _PHRASE_MULTIPLIER = 0.5
+# Han ideographs plus hiragana and katakana, which share unspaced text with Han.
+_CJK_CHARS = (
+    r"\u3005\u3041-\u309f\u30a1-\u30fa\u30fc-\u30ff\u31f0-\u31ff"
+    r"\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff"
+)
+# Latin letters outside ASCII are left out of the word alternative so Latin text
+# keeps its original ASCII tokens, and English scores stay unchanged.
+_LATIN_EXTENDED = r"\u00c0-\u02af\u1e00-\u1eff\u2c60-\u2c7f\ua720-\ua7ff\uab30-\uab6f"
+_TOKEN_PARTS = re.compile(
+    rf"[a-z0-9]+|(?P<cjk>[{_CJK_CHARS}]+)"
+    rf"|(?:(?![{_CJK_CHARS}{_LATIN_EXTENDED}])[^\W\d_])+"
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -123,7 +140,21 @@ def _validate_index_record(record: dict[str, Any], *, position: int) -> None:
 
 def _tokens(value: Any) -> tuple[str, ...]:
     normalized = unicodedata.normalize("NFKD", str(value or "")).casefold()
-    return tuple(re.findall(r"[a-z0-9]+", normalized))
+    tokens: list[str] = []
+    for match in _TOKEN_PARTS.finditer(normalized):
+        part = match.group()
+        if match.lastgroup == "cjk":
+            # Han and kana text has no spaces between words. Adjacent character
+            # pairs let a short query find a longer source description without
+            # treating every shared single character as a strong match. NFKD
+            # split voiced kana such as が from their marks, so recompose first.
+            part = unicodedata.normalize("NFC", part)
+            tokens.extend(part[index : index + 2] for index in range(len(part) - 1))
+            if len(part) == 1:
+                tokens.append(part)
+        else:
+            tokens.append(part)
+    return tuple(tokens)
 
 
 def _field_text(value: Any) -> str:
@@ -145,6 +176,9 @@ def _matches_filter(record: dict[str, Any], filters: dict[str, Any]) -> bool:
         expected = filters.get(field)
         if expected is not None and _filter_value(record.get(field)) != _filter_value(expected):
             return False
+    sources = filters.get("sources")
+    if sources is not None and _filter_value(record.get("source")) not in sources:
+        return False
     return True
 
 
@@ -153,6 +187,8 @@ class _SearchDocument:
     record: dict[str, Any]
     field_tokens: dict[str, tuple[str, ...]]
     field_counts: dict[str, Counter[str]]
+    field_ascii_lengths: dict[str, int]
+    field_unicode_lengths: dict[str, int]
     all_tokens: frozenset[str]
 
 
@@ -161,12 +197,14 @@ class _SearchCorpus:
     documents: tuple[_SearchDocument, ...]
     document_frequency: Counter[str]
     average_field_lengths: dict[str, float]
+    average_unicode_field_lengths: dict[str, float]
 
 
 def _build_search_corpus(records: list[dict[str, Any]]) -> _SearchCorpus:
     documents: list[_SearchDocument] = []
     document_frequency: Counter[str] = Counter()
     total_field_lengths: Counter[str] = Counter()
+    total_unicode_field_lengths: Counter[str] = Counter()
     for record in records:
         field_tokens = {field: _tokens(_field_text(record.get(field))) for field in _FIELD_ORDER}
         # Registered aliases are name evidence for every source. Keep the
@@ -176,14 +214,24 @@ def _build_search_corpus(records: list[dict[str, Any]]) -> _SearchCorpus:
                 _field_text(record.get("name")) + " " + _field_text(record["aliases"])
             )
         field_counts = {field: Counter(tokens) for field, tokens in field_tokens.items()}
+        ascii_lengths = {
+            field: sum(token.isascii() for token in tokens)
+            for field, tokens in field_tokens.items()
+        }
+        unicode_lengths = {
+            field: len(tokens) - ascii_lengths[field] for field, tokens in field_tokens.items()
+        }
         all_tokens = frozenset().union(*(set(tokens) for tokens in field_tokens.values()))
         document_frequency.update(all_tokens)
-        total_field_lengths.update({field: len(tokens) for field, tokens in field_tokens.items()})
+        total_field_lengths.update(ascii_lengths)
+        total_unicode_field_lengths.update(unicode_lengths)
         documents.append(
             _SearchDocument(
                 record=record,
                 field_tokens=field_tokens,
                 field_counts=field_counts,
+                field_ascii_lengths=ascii_lengths,
+                field_unicode_lengths=unicode_lengths,
                 all_tokens=all_tokens,
             )
         )
@@ -191,7 +239,11 @@ def _build_search_corpus(records: list[dict[str, Any]]) -> _SearchCorpus:
     averages = {
         field: total_field_lengths[field] / count if count else 0.0 for field in _FIELD_ORDER
     }
-    return _SearchCorpus(tuple(documents), document_frequency, averages)
+    unicode_averages = {
+        field: total_unicode_field_lengths[field] / count if count else 0.0
+        for field in _FIELD_ORDER
+    }
+    return _SearchCorpus(tuple(documents), document_frequency, averages, unicode_averages)
 
 
 def _idf(term: str, corpus: _SearchCorpus) -> float:
@@ -233,10 +285,16 @@ def _bm25f_score(
             frequency = document.field_counts[field][term]
             if not frequency:
                 continue
-            average_length = corpus.average_field_lengths[field] or 1.0
-            length_normalization = (
-                1.0 - _BM25_B + _BM25_B * (len(document.field_tokens[field]) / average_length)
-            )
+            # CJK bigrams expand descriptions that were invisible to English
+            # search. Keep ASCII length normalization on its original token
+            # population so adding Unicode support does not reorder English hits.
+            if term.isascii():
+                field_length = document.field_ascii_lengths[field]
+                average_length = corpus.average_field_lengths[field] or 1.0
+            else:
+                field_length = document.field_unicode_lengths[field]
+                average_length = corpus.average_unicode_field_lengths[field] or 1.0
+            length_normalization = 1.0 - _BM25_B + _BM25_B * (field_length / average_length)
             weighted_frequency += _FIELD_WEIGHTS[field] * frequency / length_normalization
         if weighted_frequency:
             score += _idf(term, corpus) * (
@@ -416,26 +474,48 @@ class QueryService:
         self._validated_shards = index["count"]
         return self._validated_shards
 
+    def validated_catalog_index(self) -> dict[str, Any]:
+        """Return the catalog index after validating its records and detail shards."""
+        index = self._load_index()
+        self._validate_detail_shards()
+        return index
+
     def _radar_candidates(self) -> list[dict[str, Any]]:
         latest_by_identity: dict[tuple[str, str], dict[str, Any]] = {}
         for snapshot in self._load_snapshots():
             for item in snapshot["evidence_items"]:
                 source = str(item.get("source") or "")
                 source_id = str(item.get("source_id") or "")
+                identity = source_id
+                if source == "Hugging Face":
+                    # Hub kinds have independent owner/name namespaces. Use
+                    # the primary repository URL, excluding related artifacts,
+                    # to keep each kind's latest observation and public key.
+                    identity = exact_artifact_key(
+                        {"source": source, "source_id": source_id, "url": item.get("url")}
+                    )
                 urls = [str(item.get("url") or ""), *(item.get("artifact_urls") or [])]
-                latest_by_identity[(source, source_id)] = {
+                latest_by_identity[(source, identity)] = {
                     "kind": "radar",
-                    "key": f"radar:{source.casefold()}:{source_id}",
+                    "key": f"radar:{source.casefold()}:{identity}",
                     "slug": None,
                     "name": str(item.get("title") or ""),
                     "description": str(item.get("summary") or ""),
                     "categories": list(item.get("categories") or []),
+                    # Derived here rather than copied from the snapshot:
+                    # stored snapshots predate the field, so a plain copy
+                    # would hand every historical record an empty list on
+                    # this surface while radar.json showed tags (issue #511
+                    # review BLOCKER). Same function, same output.
+                    "science_domains": science_domains_for_record(item),
                     "publisher": " ".join(item.get("organizations") or []),
+                    "authors": [str(name) for name in item.get("authors") or []],
                     "modality": None,
                     "languages": [],
                     "source": source,
                     "source_id": source_id,
                     "url": item.get("url"),
+                    "artifact_urls": list(item.get("artifact_urls") or []),
                     "published_at": item.get("published_at"),
                     "updated_at": item.get("updated_at"),
                     "score": item.get("total_score"),
@@ -453,10 +533,8 @@ class QueryService:
         return list(latest_by_identity.values())
 
     def _provenance(self) -> dict[str, Any]:
-        # `citation` rides here rather than in a separate top-level key so every
-        # payload command reports it through the one provenance path (issue
-        # #483 follow-up): an agent that reads stdout only still receives the
-        # paper, in a form it can put into a related-work table.
+        # Provenance retains the full citation formats for existing consumers.
+        # Research payloads also expose required_citations as the dependency contract.
         return {
             "source": "local",
             "citation": citation_block(),
@@ -500,6 +578,7 @@ class QueryService:
         openness: str | None = None,
         modality: str | None = None,
         source: str | None = None,
+        sources: frozenset[str] | None = None,
     ) -> dict[str, Any]:
         query = " ".join(str(query).split())
         query_tokens = tuple(dict.fromkeys(_tokens(query)))
@@ -533,6 +612,8 @@ class QueryService:
             }.items()
             if value is not None
         }
+        if sources is not None:
+            filters["sources"] = sorted(_filter_value(value) for value in sources)
         candidates: list[dict[str, Any]] = []
         if scope in {"catalog", "all"}:
             candidates.extend(self._catalog_candidates())
@@ -597,8 +678,30 @@ class QueryService:
             "partial_match_count": partial_match_count,
             "count": len(results),
             "data": self._data_summary(scope=scope),
+            "required_citations": required_citations(),
             "results": results,
         }
+
+    def related_work(
+        self,
+        topics: list[str],
+        *,
+        per_topic: int = 6,
+        include_partial: bool = False,
+        include_radar: bool = True,
+        manuscript: ManuscriptContext | None = None,
+    ) -> dict[str, Any]:
+        """Draft a cited related-work section from topic queries (issues #549, #650)."""
+        from .related_work import build_related_work
+
+        return build_related_work(
+            self,
+            topics,
+            per_topic=per_topic,
+            include_partial=include_partial,
+            include_radar=include_radar,
+            manuscript=manuscript,
+        )
 
     def show(self, identifier: str) -> dict[str, Any]:
         identifier = str(identifier).strip()
@@ -653,6 +756,7 @@ class QueryService:
                 "catalog_path": str(self.paths.index),
                 "shard_path": str(path),
             },
+            "required_citations": required_citations(),
             "benchmark": shard,
         }
 
@@ -681,7 +785,9 @@ class QueryService:
                 continue
             if recommended and item.get("recommended") is not True:
                 continue
-            results.append(item)
+            # Same derivation the dashboard publishes, so `recent` and
+            # `search` cannot disagree about a record's domains.
+            results.append({**item, "science_domains": science_domains_for_record(item)})
         results = results[:limit]
         return {
             "schema_version": QUERY_SCHEMA_VERSION,
@@ -700,6 +806,7 @@ class QueryService:
             "limit": limit,
             "count": len(results),
             "data": self._data_summary(scope="radar"),
+            "required_citations": required_citations(),
             "results": results,
         }
 

@@ -12,6 +12,7 @@ from typing import Any
 from . import kw_bench
 from .app_pages import write_app_pages
 from .attention import fetch_attention_feeds
+from .benchmark_attention import merge_benchmark_attention
 from .benchmark_scores import DEFAULT_SCORES_PATH, load_scores, score_progression
 from .blog import write_blog
 from .corpus import (
@@ -42,6 +43,7 @@ from .rubric import (
     v3_rubric_reference,
     v4_rubric_reference,
 )
+from .science_domains import science_domains_for_record
 from .site_about import write_about
 from .site_pages import DEFAULT_SHARD_DIR, benchmark_sitemap_entries
 from .site_seo import site_lastmod, write_sitemap
@@ -106,6 +108,9 @@ def snapshot_for_run(run: RadarRun) -> dict[str, Any]:
         "producer_health": [health.to_dict() for health in run.producer_health],
         "selection": run.selection,
         "discovery_state": run.discovery_state,
+        # Present only when the collector ran, so the ranking can tell "no
+        # signals observed" from "collection disabled" (issue #530).
+        **({"benchmark_attention": run.benchmark_attention} if run.benchmark_attention else {}),
     }
 
 
@@ -724,6 +729,14 @@ def merge_snapshots(existing: dict[str, Any], incoming: dict[str, Any]) -> dict[
     # that describes the merged day. Fall back to the existing briefing only
     # when the incoming pass has none, so a day never loses one it already had.
     briefing = incoming.get("briefing") or existing.get("briefing")
+    # Like the Q&A below, a fallback never replaces a real GPT briefing: a
+    # same-day rerun that hit a rate limit must not discard the earlier pass's
+    # synthesis and its model/usage metadata.
+    existing_briefing = existing.get("briefing") or {}
+    if (briefing or {}).get("generator") == "deterministic-fallback" and existing_briefing.get(
+        "generator"
+    ) not in (None, "deterministic-fallback"):
+        briefing = existing_briefing
     # The Q&A mostly follows the same rule: the incoming pass answered from the
     # union, so it wins. The exception is a day that already has real answers
     # (status "generated") and the incoming pass only disabled/errored, e.g. a
@@ -738,6 +751,12 @@ def merge_snapshots(existing: dict[str, Any], incoming: dict[str, Any]) -> dict[
     else:
         day_questions = incoming_questions or existing_questions
 
+    # Ranking signals follow the same union rule: a second pass that ran out
+    # of request budget must not erase the counters the first pass observed.
+    merged_benchmark_attention = merge_benchmark_attention(
+        existing.get("benchmark_attention"), incoming.get("benchmark_attention")
+    )
+
     merged = {
         **incoming,
         "evidence_items": evidence_items,
@@ -750,6 +769,10 @@ def merge_snapshots(existing: dict[str, Any], incoming: dict[str, Any]) -> dict[
         merged["briefing"] = briefing
     else:
         merged.pop("briefing", None)
+    if merged_benchmark_attention:
+        merged["benchmark_attention"] = merged_benchmark_attention
+    else:
+        merged.pop("benchmark_attention", None)
     if day_questions:
         merged["questions"] = day_questions
     else:
@@ -1015,16 +1038,23 @@ def dashboard_data(
     sources: set[str] = set()
     organizations: set[str] = set()
     event_kinds: set[str] = set()
+    science_domains: set[str] = set()
     for snapshot in snapshots:
         # Snapshot schema v2 predates scoring-version metadata. Preserve those
         # historical 0-4 values explicitly so a current 0-100 label and formula
         # can never be shown beside arithmetic they did not produce.
+        # `science_domains` is the other rebuild-time derivation besides
+        # `organizations`: a routing tag replayed from stored title/summary so
+        # every historical day lights up without rewriting any snapshot. It is
+        # deliberately absent from attention observations, which are commentary
+        # about records rather than benchmark evidence.
         evidence_items = [
             {
                 **item,
                 "score_version": int(item.get("score_version") or 1),
                 "score_max": float(item.get("score_max") or 4.0),
                 "organizations": organizations_for_item(item),
+                "science_domains": science_domains_for_record(item),
             }
             for item in snapshot["evidence_items"]
         ]
@@ -1062,6 +1092,9 @@ def dashboard_data(
         )
         event_kinds.update(event_counts)
         event_kinds.update(attention_event_counts)
+        science_domains.update(
+            domain for item in evidence_items for domain in item["science_domains"]
+        )
         evidence_health = [
             entry
             for entry in snapshot["ingest_health"]
@@ -1143,6 +1176,9 @@ def dashboard_data(
             "organizations": sorted(organizations),
             "event_kinds": sorted(event_kinds),
             "kinds": ["evidence", "attention"],
+            # Routing facet for the upcoming AI-for-Science view; empty until
+            # a corpus day declares a domain. Not a quality signal.
+            "science_domains": sorted(science_domains),
         },
         "days": days,
         "corpus": corpus,

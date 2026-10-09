@@ -20,7 +20,13 @@ import re
 from datetime import date
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
+from .catalog_snapshot_adapters import (
+    SCORE_SERIES_POLICIES,
+    CatalogSnapshotAdapterError,
+    adapt_catalog_row,
+)
 from .score_summary import score_summary
 
 CATALOG_SCHEMA_VERSION = 1
@@ -35,13 +41,12 @@ ARTIFICIAL_ANALYSIS_SNAPSHOT_ID = "artificial_analysis_2026-08-25"
 ARTIFICIAL_ANALYSIS_SOURCE = "artificial_analysis"
 ARTIFICIAL_ANALYSIS_KEY_PREFIX = "artificial-analysis"
 
-# Every crawled snapshot in the registry is the same two CSVs with the same
-# header vocabulary, so one normalizer reads all of them and a source is three
-# strings rather than a module. A second shape would mean a second loader, a
-# second normalizer, and two sets of invariants drifting apart.
+# Publication identity stays separate from input shape. Registry-selected
+# adapters translate source rows before this map supplies their catalog keys.
 SOURCES = {
     LLM_STATS_SNAPSHOT_ID: (LLM_STATS_SOURCE, LLM_STATS_KEY_PREFIX),
     ARTIFICIAL_ANALYSIS_SNAPSHOT_ID: (ARTIFICIAL_ANALYSIS_SOURCE, ARTIFICIAL_ANALYSIS_KEY_PREFIX),
+    "claire_radar_2026-09-25": ("claire_radar", "claire-radar"),
 }
 
 _SLUG_STRIP = re.compile(r"[^a-z0-9]+")
@@ -127,12 +132,20 @@ def assign_slugs(keys: list[str]) -> dict[str, str]:
     happened to arrive in.
     """
     assigned: dict[str, str] = {}
-    used: dict[str, int] = {}
+    used: set[str] = set()
     for key in sorted(keys):
         base = slugify(key)
-        count = used.get(base, 0) + 1
-        used[base] = count
-        assigned[key] = base if count == 1 else f"{base}-{count}"
+        slug = base
+        count = 1
+        # A "-N" suffix can land on another key's natural slug (two variants of
+        # "vending bench" collide onto "vending-bench-2" while a real
+        # "vending-bench-2" key already owns that slug), so keep bumping until
+        # the slug is globally free rather than trusting the per-base counter.
+        while slug in used:
+            count += 1
+            slug = f"{base}-{count}"
+        used.add(slug)
+        assigned[key] = slug
     return assigned
 
 
@@ -158,6 +171,31 @@ def json_list(value: str) -> list[str]:
     return [str(item) for item in parsed] if isinstance(parsed, list) else []
 
 
+def artifact_identifier(url: str) -> str | None:
+    """Return a catalog identity anchor for a supported first-party URL.
+
+    Identity links are reviewed elsewhere; this function only gives a stable
+    spelling to an arXiv paper, GitHub repository, or Hugging Face dataset so
+    the candidate generator can compare like with like. Repository subpaths
+    are deliberately rejected because a directory inside a monorepo is not the
+    same identity claim as the repository itself.
+    """
+    parsed = urlsplit(url)
+    host = (parsed.hostname or "").lower().removeprefix("www.")
+    path = parsed.path.strip("/")
+    if host == "arxiv.org":
+        match = re.fullmatch(r"(?:abs|pdf)/(\d{4}\.\d{4,5})(?:v\d+)?(?:\.pdf)?", path)
+        return f"arxiv:{match.group(1)}" if match else None
+    if host == "github.com":
+        parts = path.removesuffix(".git").split("/")
+        return f"gh:{parts[0]}/{parts[1]}".lower() if len(parts) == 2 else None
+    if host == "huggingface.co":
+        parts = path.split("/")
+        if len(parts) == 3 and parts[0] == "datasets":
+            return f"hf:{parts[1]}/{parts[2]}".lower()
+    return None
+
+
 def value_kind(raw: str, parsed: float | None) -> str:
     if not (raw or "").strip():
         return "missing"
@@ -165,7 +203,7 @@ def value_kind(raw: str, parsed: float | None) -> str:
 
 
 def _source_record(
-    row: dict[str, str],
+    row: dict[str, Any],
     slug: str,
     crawled_at: str,
     *,
@@ -175,6 +213,92 @@ def _source_record(
 ) -> dict[str, Any]:
     source_id = row["benchmark_id"].strip()
     description = (row.get("description") or "").strip()
+    artifacts = []
+    for kind, column in (
+        ("paper", "paper_url"),
+        ("repo", "repo_url"),
+        ("dataset", "dataset_url"),
+        ("website", "project_url"),
+    ):
+        url = (row.get(column) or "").strip()
+        if url:
+            artifact = {"kind": kind, "url": url}
+            identifier = artifact_identifier(url)
+            if identifier:
+                artifact["id"] = identifier
+            if artifact not in artifacts:
+                artifacts.append(artifact)
+    provenance = {
+        "source_url": (row.get("detail_source_url") or "").strip() or None,
+        "crawled_at": crawled_at,
+        "crawl_bundle": snapshot_id,
+    }
+    optional_provenance = {
+        "origin_source": (row.get("origin_source") or "").strip(),
+        "origin_record_id": (row.get("origin_record_id") or "").strip(),
+        "display_eligible": (row.get("display_eligible") or "").strip(),
+        "data_status": (row.get("data_status") or "").strip(),
+        "confidence": (row.get("confidence") or "").strip(),
+        "recognition_confidence": (row.get("recognition_confidence") or "").strip(),
+        "relation": (row.get("relation") or "").strip(),
+        "review_state": (row.get("review_state") or "").strip(),
+        "reviewed_at": (row.get("reviewed_at") or "").strip(),
+        "review_model": (row.get("review_model") or "").strip(),
+        "admission_policy_version": (row.get("admission_policy_version") or "").strip(),
+        "record_sha256": (row.get("record_sha256") or "").strip(),
+    }
+    provenance.update({key: value for key, value in optional_provenance.items() if value})
+    source_metadata = row.get("source_metadata") or {}
+    if not isinstance(source_metadata, dict):
+        raise CatalogError(f"{snapshot_id}:{source_id}:source_metadata must be an object")
+    source_url = provenance["source_url"]
+    released = str(row.get("released") or "").strip() or None
+    if released:
+        try:
+            if date.fromisoformat(released).isoformat() != released:
+                raise ValueError
+        except ValueError as error:
+            raise CatalogError(
+                f"{snapshot_id}:{source_id}: released {released!r} is not an ISO date"
+            ) from error
+    released_basis = str(row.get("released_basis") or "benchmark_release").strip()
+    if released_basis not in {"benchmark_release", "first_public"}:
+        raise CatalogError(
+            f"{snapshot_id}:{source_id}: released_basis {released_basis!r} is not supported"
+        )
+    released_source_url = str(row.get("released_source_url") or "").strip() or source_url
+    publication_dates = row.get("publication_dates") or []
+    if not isinstance(publication_dates, list):
+        raise CatalogError(f"{snapshot_id}:{source_id}: publication_dates must be an array")
+    normalized_publication_dates: list[dict[str, str]] = []
+    for index, item in enumerate(publication_dates):
+        if not isinstance(item, dict):
+            raise CatalogError(
+                f"{snapshot_id}:{source_id}: publication_dates[{index}] must be an object"
+            )
+        date_value = str(item.get("date") or "").strip()
+        basis = str(item.get("basis") or "").strip()
+        evidence_url = str(item.get("source_url") or "").strip()
+        if basis != "paper_first_version":
+            raise CatalogError(
+                f"{snapshot_id}:{source_id}: publication_dates[{index}].basis "
+                f"{basis!r} is not supported"
+            )
+        if not date_value or not evidence_url:
+            raise CatalogError(
+                f"{snapshot_id}:{source_id}: publication_dates[{index}] needs date and source_url"
+            )
+        try:
+            if date.fromisoformat(date_value).isoformat() != date_value:
+                raise ValueError
+        except ValueError as error:
+            raise CatalogError(
+                f"{snapshot_id}:{source_id}: publication_dates[{index}].date "
+                f"{date_value!r} is not an ISO date"
+            ) from error
+        normalized_publication_dates.append(
+            {"date": date_value, "basis": basis, "source_url": evidence_url}
+        )
     return {
         "key": f"{key_prefix}:{source_id}",
         "slug": slug,
@@ -182,11 +306,12 @@ def _source_record(
         "source": source,
         "source_benchmark_id": source_id,
         "name": (row.get("name") or "").strip() or source_id,
+        "aliases": json_list(row.get("aliases", "")),
         "description": {"en": description} if description else {},
-        # Everything below is empty because the source carries no such field.
+        # Optional source fields stay optional; unknown values remain unknown.
         # See the module docstring: these are answers, not gaps.
         "publisher": None,
-        "artifacts": [],
+        "artifacts": artifacts,
         "openness": {
             "status": "unknown",
             "code_license": None,
@@ -194,14 +319,25 @@ def _source_record(
             "evidence": [],
         },
         "sizes": [],
-        "released": None,
+        "released": released,
+        "released_reference": (
+            {
+                "source_key": f"{key_prefix}:{source_id}",
+                "source_url": released_source_url,
+                "basis": released_basis,
+            }
+            if released and released_source_url
+            else None
+        ),
+        **(
+            {"publication_dates": normalized_publication_dates}
+            if normalized_publication_dates
+            else {}
+        ),
         "modality": (row.get("modality") or "").strip() or None,
         "categories": json_list(row.get("categories", "")),
-        "provenance": {
-            "source_url": (row.get("detail_source_url") or "").strip() or None,
-            "crawled_at": crawled_at,
-            "crawl_bundle": snapshot_id,
-        },
+        "provenance": provenance,
+        **({"source_metadata": {source: source_metadata}} if source_metadata else {}),
     }
 
 
@@ -301,7 +437,7 @@ def first_score_record(
 
 
 def _series(
-    row: dict[str, str],
+    row: dict[str, Any],
     *,
     key: str,
     observations: list[dict[str, Any]],
@@ -343,19 +479,36 @@ def _series(
 def normalize_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
     """Turn one validated crawl snapshot into catalog records.
 
-    Source-agnostic: every snapshot in the registry is the same two CSVs with
-    the same header vocabulary, so the only thing that varies between them is
-    the three strings in `SOURCES`. Returns source records, score series and
-    observations, plus the validation counts that let a reviewer check the
-    result without rereading the CSVs.
+    Registry-selected adapters translate source-private rows into the common
+    contract consumed here. This function applies source-independent record and
+    series rules, then returns validation counts a reviewer can check without
+    rereading the CSVs.
     """
     snapshot_id = snapshot["id"]
     if snapshot_id not in SOURCES:
         raise CatalogError(f"snapshot {snapshot_id!r} has no source descriptor")
     source, key_prefix = SOURCES[snapshot_id]
 
-    benchmark_rows = snapshot["benchmark_rows"]
+    adapter = snapshot.get("catalog_adapter") or "identity"
+    adapter_options = snapshot.get("adapter_options") or {}
+    try:
+        benchmark_rows = [
+            adapt_catalog_row(
+                row,
+                adapter=adapter,
+                adapter_options=adapter_options,
+                snapshot_id=snapshot_id,
+            )
+            for row in snapshot["benchmark_rows"]
+        ]
+    except CatalogSnapshotAdapterError as error:
+        raise CatalogError(str(error)) from error
     score_rows = snapshot["score_rows"] or []
+    score_series_policy = snapshot.get("score_series_policy")
+    if score_series_policy not in SCORE_SERIES_POLICIES:
+        raise CatalogError(
+            f"snapshot {snapshot_id!r} has invalid score_series_policy {score_series_policy!r}"
+        )
     crawled_at = snapshot["crawled_at"]
 
     keys = [f"{key_prefix}:{row['benchmark_id'].strip()}" for row in benchmark_rows]
@@ -391,7 +544,8 @@ def normalize_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
             for score_row in rows
         ]
         observations.extend(observed)
-        series.append(_series(row, key=key, observations=observed, source=source))
+        if observed or score_series_policy == "preserve_empty":
+            series.append(_series(row, key=key, observations=observed, source=source))
 
     records.sort(key=lambda item: item["key"])
     series.sort(key=lambda item: item["series_id"])
@@ -442,7 +596,7 @@ def _validation(
         "obs_id_unique": not collisions,
         "obs_id_collisions": collisions,
         "benchmarks_with_zero_observations": sorted(
-            item["key"] for item in series if item["observation_count"] == 0
+            {item["key"] for item in records} - {item["key"] for item in observations}
         ),
         "max_score_contradicted_benchmarks": sorted(contradicted),
         "max_score_contradicted_row_count": sum(
@@ -521,6 +675,7 @@ def write_catalog(
 def build_benchmark_index(
     records: list[dict[str, Any]],
     series_by_key: dict[str, dict[str, Any]] | None = None,
+    observations: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """The small search payload: one entry per source record, never per merge.
 
@@ -530,6 +685,21 @@ def build_benchmark_index(
     it is invisible. One row per record keeps a bad grouping a display bug.
     """
     series_by_key = series_by_key or {}
+    models_by_key: dict[str, dict[str, dict[str, Any]]] = {}
+    for observation in observations or []:
+        name = observation.get("model_name")
+        if not name or not isinstance(observation.get("value"), (int, float)):
+            continue
+        models = models_by_key.setdefault(observation["key"], {})
+        # One model name per source benchmark. Keep the most recent recorded
+        # date and its precision; a model release is not an evaluation update.
+        current = models.get(name)
+        if current is None or (observation.get("reported_date") or "") > (current["date"] or ""):
+            models[name] = {
+                "name": name,
+                "date": observation.get("reported_date"),
+                "date_precision": observation.get("date_precision"),
+            }
     index: list[dict[str, Any]] = []
     for record in records:
         openness = record.get("openness") or {}
@@ -581,7 +751,18 @@ def build_benchmark_index(
                 "openness": openness.get("status", "unknown"),
                 "modality": record.get("modality"),
                 "score_count": series.get("observation_count", 0),
-                "score_summary": series.get("score_summary"),
+                "scored_models": sorted(
+                    models_by_key.get(record["key"], {}).values(),
+                    key=lambda model: model["name"].lower(),
+                ),
+                # Zero observations keep a declared scale's summary so the
+                # index agrees with the shard; a stub without that declared
+                # evidence (direction) still reads as absent (#709).
+                "score_summary": (
+                    series.get("score_summary")
+                    if series.get("observation_count", 0) or series.get("direction")
+                    else None
+                ),
                 "score_direction": series.get("direction"),
                 "unit": series.get("unit"),
                 "evidence_summary": record.get("evidence_summary"),

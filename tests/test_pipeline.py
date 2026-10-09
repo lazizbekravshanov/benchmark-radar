@@ -10,6 +10,7 @@ from benchmark_radar.pipeline import (
     assert_no_boilerplate_summaries,
     canonical_url,
     deduplicate,
+    flag_repeated_summaries,
     normalized_title,
     run_pipeline,
     score_item,
@@ -286,6 +287,161 @@ def test_distinct_and_empty_summaries_are_allowed():
     # Many empty summaries are legitimate: those repos published no card.
     varied.extend(item(source_id=f"org/bare-{n}", summary="") for n in range(5))
     assert_no_boilerplate_summaries(varied)
+
+
+def test_same_owner_upstream_card_bodies_are_allowed():
+    from unittest.mock import patch
+
+    from benchmark_radar.sources import fetch_huggingface
+
+    description = (
+        "Model-comparison table for this task: one row per evaluated model, written by\n"
+        "push_results_table in src/eval/utilities.py. Per-sample predictions are in\n"
+        "per_sample/.\n"
+    )
+    rows = [
+        {
+            "id": f"bdatm-project/evaluation-results-task{task}",
+            "createdAt": "2026-09-06T21:21:35Z",
+            "lastModified": "2026-10-04T10:00:00Z",
+            "description": description,
+        }
+        for task in (1, 2, 3)
+    ]
+    with patch("benchmark_radar.sources.get_json", return_value=rows):
+        records = fetch_huggingface(
+            {"kinds": ["datasets"], "searches": ["evaluation"]},
+            datetime(2026, 10, 3, tzinfo=UTC),
+            10,
+        )
+
+    assert len(records) == 3
+    assert all(record.summary for record in records)
+    assert_no_boilerplate_summaries(records)
+
+
+@pytest.mark.parametrize(
+    "invalid_evidence", ["missing", "rewritten", "short", "owner", "source", "suite", "unnumbered"]
+)
+def test_repeated_summaries_still_require_same_owner_card_bodies(invalid_evidence):
+    summary = "Measurements for three evaluation tasks."
+    records = [
+        item(
+            source="Hugging Face",
+            source_id=f"lab/evaluation-results-task{task}",
+            summary=summary,
+            raw={"description": summary},
+        )
+        for task in range(3)
+    ]
+    if invalid_evidence == "missing":
+        records[0].raw = {}
+    elif invalid_evidence == "rewritten":
+        records[0].raw = {"description": "Different upstream prose."}
+    elif invalid_evidence == "short":
+        records[0].raw = {"cardData": {"short_description": summary}}
+    elif invalid_evidence == "owner":
+        records[0].source_id = "other-lab/evaluation-results-task0"
+    elif invalid_evidence == "source":
+        records[0].source = "GitHub"
+    elif invalid_evidence == "suite":
+        records[0].source_id = "lab/other-results-task0"
+    else:
+        for task, record in enumerate(records):
+            record.source_id = f"lab/unrelated-repo-{task}"
+
+    with pytest.raises(RuntimeError, match="templated descriptions"):
+        assert_no_boilerplate_summaries(records)
+
+
+def test_a_small_upstream_cluster_warns_instead_of_failing(capsys):
+    """Regression: the 2026-10-06 and 2026-10-07 daily runs aborted because three
+    unrelated datasets shared the summary 'Original synthetic data for testing
+    ML evaluation assumptions.' Three records must not cost the whole snapshot."""
+    shared = "Original synthetic data for testing ML evaluation assumptions."
+    records = [
+        _fresh(
+            source="Hugging Face",
+            source_id=f"uploader-{n}/synthetic-{n}",
+            title=f"Synthetic Evaluation Dataset {n}",
+            summary=shared,
+        )
+        for n in range(3)
+    ]
+    records.extend(
+        _fresh(source_id=f"distinct-{n}", title=f"Distinct Benchmark {n}", summary=f"Finding {n}.")
+        for n in range(3)
+    )
+
+    published, selection = _score_and_select(
+        records,
+        _funnel_config(),
+        now=FUNNEL_NOW,
+        fetched_count=len(records),
+        suppressed_count=0,
+    )
+
+    assert selection["summaries_repeated"] == 3
+    assert selection["deduplicated"] == 6
+    assert selection["published"] == 6
+    repeated = [record for record in published if record.source == "Hugging Face"]
+    assert len(repeated) == 3
+    assert all(record.summary == shared for record in repeated)
+    assert "::warning title=Repeated summaries::3 records" in capsys.readouterr().out
+
+
+def test_repeated_text_keeps_the_categories_it_earned():
+    """The shared card text may be a record's only taxonomy signal. Dropping it
+    would leave the record uncategorized and remove it from the snapshot."""
+    records = [
+        _fresh(
+            source="Hugging Face",
+            source_id=f"lab/opaque-{n}",
+            title=f"Opaque Repo {n}",
+            summary="A benchmark for code agents.",
+        )
+        for n in range(3)
+    ]
+
+    published, selection = _score_and_select(
+        records,
+        _funnel_config(),
+        now=FUNNEL_NOW,
+        fetched_count=len(records),
+        suppressed_count=0,
+    )
+
+    assert selection["summaries_repeated"] == 3
+    assert len(published) == 3
+    assert all(record.categories == ["benchmark"] for record in published)
+
+
+def test_a_systemic_template_still_fails_the_run():
+    templated = [
+        item(source_id=f"org/repo-{n}", summary="Dataset repository updated on Hugging Face.")
+        for n in range(26)
+    ]
+    templated.extend(item(source_id=f"org/real-{n}", summary=f"Finding {n}.") for n in range(4))
+    with pytest.raises(RuntimeError, match="templated descriptions"):
+        flag_repeated_summaries(templated)
+
+
+def test_several_small_clusters_are_not_mistaken_for_a_template():
+    records = [
+        item(source_id=f"org/{size}-{n}", summary=f"Shared card text {size}.")
+        for size in (4, 3, 3)
+        for n in range(size)
+    ]
+    records.extend(item(source_id=f"org/real-{n}", summary=f"Finding {n}.") for n in range(20))
+
+    assert flag_repeated_summaries(records) == 10
+
+
+def test_a_healthy_run_flags_nothing():
+    assert (
+        _select([_fresh(source_id="keep", summary="One distinct finding.")])["summaries_repeated"]
+        == 0
+    )
 
 
 def test_boilerplate_summary_cannot_earn_relevance():
@@ -1240,6 +1396,112 @@ def test_simulate_backfill_excludes_items_published_after_the_simulated_date(mon
     assert titles == {"org/early"}
 
 
+def test_simulate_backfill_places_an_openaire_product_on_its_publication_day(monkeypatch):
+    """A product must land on the day a live run would have collected it.
+
+    `fetch_openaire` decides membership on `publicationDate`, while this
+    function places an item by `updated_at or published_at`. The row also
+    carries `dateOfCollection`, the day OpenAIRE indexed the product, which is
+    routinely months later; dating the record by it would hide the product on
+    its publication day and surface it on a day the connector's own window
+    guard rejects. The real connector runs here so both halves of that
+    contract are checked against each other.
+    """
+    monkeypatch.setattr(
+        "benchmark_radar.sources.get_json",
+        lambda url, **kwargs: {
+            "header": {"numFound": 1},
+            "results": [
+                {
+                    "id": "openaire____::radar99001",
+                    "mainTitle": "A Federated Benchmark Dataset",
+                    "publicationDate": "2026-07-05",
+                    "dateOfCollection": "2026-07-20T00:00:00Z",
+                    "pids": [{"scheme": "doi", "value": "10.5281/zenodo.99001"}],
+                }
+            ],
+        },
+    )
+    config = _backfill_config()
+    config["sources"]["openaire"] = {"enabled": True, "searches": ["benchmark"]}
+    dates = [datetime(2026, 7, 5, 12, tzinfo=UTC), datetime(2026, 7, 20, 12, tzinfo=UTC)]
+
+    publication_day, collection_day = simulate_backfill(config, dates)
+
+    assert [item_.source_id for item_ in publication_day.items] == ["openaire____::radar99001"]
+    assert [item_.source_id for item_ in collection_day.items] == []
+
+
+def test_simulate_backfill_places_a_datacite_doi_on_its_registration_day(monkeypatch):
+    """A metadata edit must not move a DOI to a day its own window rejects.
+
+    `fetch_datacite` decides membership on `registered`, while this function
+    places an item by `updated_at or published_at`. While the connector put
+    DataCite's mutable `updated` there, a DOI registered on the 5th and edited
+    on the 20th disappeared from the 5th, the day a live run would have
+    published it, and appeared on the 20th, which the connector's own window
+    guard rejects. The real connector runs here so the two halves of that
+    contract are checked against each other rather than separately.
+    """
+    monkeypatch.setattr(
+        "benchmark_radar.sources.get_json",
+        lambda url, **kwargs: {
+            "data": [
+                {
+                    "id": "10.5281/zenodo.99001",
+                    "attributes": {
+                        "doi": "10.5281/ZENODO.99001",
+                        "titles": [{"title": "A Deposited Benchmark Dataset"}],
+                        "registered": "2026-07-05T09:00:00.000Z",
+                        "updated": "2026-07-20T10:00:00.000Z",
+                    },
+                }
+            ]
+        },
+    )
+    config = _backfill_config()
+    config["sources"]["datacite"] = {"enabled": True, "searches": ["benchmark"]}
+    dates = [datetime(2026, 7, 5, 12, tzinfo=UTC), datetime(2026, 7, 20, 12, tzinfo=UTC)]
+
+    registration_day, edit_day = simulate_backfill(config, dates)
+
+    assert [item_.source_id for item_ in registration_day.items] == ["10.5281/zenodo.99001"]
+    assert [item_.source_id for item_ in edit_day.items] == []
+
+
+def test_simulate_backfill_asks_each_source_for_the_span_it_simulates(monkeypatch):
+    """A backfilled day must not be empty because the query ran up to today.
+
+    Every backfill connector takes its upper bound from `_collection_now` and
+    returns one page of its newest matches. Called without it, each one queried
+    up to real now, so a historical span came back full of rows published this
+    week; the per-date filter discarded all of them and the rows that actually
+    belonged in the requested windows were never fetched. The day then looked
+    like a quiet day rather than an unasked question.
+    """
+    seen: dict[str, datetime] = {}
+
+    def fake_datacite(config, since, limit):
+        seen["upper"] = config["_collection_now"]
+        seen["since"] = since
+        return []
+
+    monkeypatch.setitem(
+        __import__("benchmark_radar.pipeline", fromlist=["SOURCE_FETCHERS"]).SOURCE_FETCHERS,
+        "datacite",
+        fake_datacite,
+    )
+    config = _backfill_config()
+    config["sources"]["datacite"] = {"enabled": True, "searches": ["benchmark"]}
+    dates = [datetime(2026, 7, 5, 12, tzinfo=UTC), datetime(2026, 7, 20, 12, tzinfo=UTC)]
+
+    simulate_backfill(config, dates)
+
+    # The newest day being simulated, not whenever this happens to run.
+    assert seen["upper"] == dates[-1]
+    assert seen["since"] < dates[0]
+
+
 def test_simulate_backfill_marks_arxiv_as_a_known_limitation(monkeypatch):
     monkeypatch.setitem(
         __import__("benchmark_radar.pipeline", fromlist=["SOURCE_FETCHERS"]).SOURCE_FETCHERS,
@@ -1625,3 +1887,60 @@ def test_self_exclusion_survives_a_watchlist_hit():
     # The record really did match the watchlist; suppression still won.
     assert selection["watchlisted"] == 0
     assert retained == []
+
+
+def test_sources_fetch_concurrently_but_shared_hosts_stay_serial(monkeypatch):
+    """Fetching sixteen sources in turn was most of the daily run. Separate
+    hosts now overlap; GitHub's three connectors still share one lane so the
+    token's rate limit sees them one at a time."""
+    import threading
+    import time
+
+    from benchmark_radar import pipeline
+
+    active: dict[str, int] = {"github": 0}
+    overlap = {"github": 0}
+    lock = threading.Lock()
+    started = threading.Barrier(2, timeout=5)
+
+    def github_fetcher(name):
+        def fetch(config, since, limit):
+            with lock:
+                active["github"] += 1
+                overlap["github"] = max(overlap["github"], active["github"])
+            time.sleep(0.05)
+            with lock:
+                active["github"] -= 1
+            return [item(source_id=f"{name}/1", url=f"https://github.com/{name}/1")]
+
+        return fetch
+
+    def barrier_fetcher(name):
+        def fetch(config, since, limit):
+            # Both separate-host sources must be in flight at once to pass.
+            started.wait()
+            return [item(source_id=f"{name}/1", url=f"https://example.test/{name}")]
+
+        return fetch
+
+    names = ["github", "zenodo", "github_releases", "crossref", "github_organizations"]
+    for name in names:
+        fetcher = github_fetcher(name) if name.startswith("github") else barrier_fetcher(name)
+        monkeypatch.setitem(pipeline.SOURCE_FETCHERS, name, fetcher)
+    config = {
+        "radar": {
+            "lookback_hours": 48,
+            "max_items_per_source": 10,
+            "report_limit": 10,
+            "minimum_score": 0,
+        },
+        "taxonomy": {"benchmark": ["benchmark"]},
+        "sources": {name: {"enabled": True} for name in names},
+    }
+
+    run = run_pipeline(config, datetime(2026, 7, 27, tzinfo=UTC))
+
+    assert overlap["github"] == 1
+    # Health stays in config order, exactly as a sequential fetch reported it.
+    assert [source.source for source in run.health] == names
+    assert all(source.ok for source in run.health)

@@ -9,8 +9,8 @@ a final benchmark recommendation system.
 Version 1 contains 18 short English queries:
 
 - 4 navigational queries for known benchmark names;
-- 10 topical discovery queries grounded in normalized Catalog metadata;
-- 4 known Catalog-gap queries used to detect newly introduced full lexical matches.
+- 12 topical discovery queries grounded in normalized Catalog metadata;
+- 2 known Catalog-gap queries used to detect newly introduced full lexical matches.
 
 Positive queries list manually reviewed Catalog keys in `relevant_keys`. The labels
 are sparse: an unlisted result is **unjudged**, not irrelevant. This matters because
@@ -19,9 +19,12 @@ without a completely judged result pool.
 
 Gap queries separately list `expected_partial_keys`. These are reviewed lexical
 candidates, not suitable benchmark labels. They ensure that a future all-terms gate
-cannot earn a perfect gap score by deleting the evidence an agent should inspect. The
-weather-forecasting case is the explicit zero-overlap control and has no expected
-partial candidate.
+cannot earn a perfect gap score by deleting the evidence an agent should inspect.
+
+A source refresh can add relevant records that outrank every labelled key, which
+drops Hit@5 or Recall@20 without any change to the ranking code. Review the records
+that displaced the labels and add the relevant ones rather than lowering a threshold;
+labels that fall outside the window stay listed so the report keeps showing them.
 
 The gap cases do not assert that the wider world lacks the benchmark. They assert
 only that the current normalized Catalog has no reviewed full-token match. If a

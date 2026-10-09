@@ -1,5 +1,8 @@
 # Benchmark Radar technical report
 
+<a href="https://arxiv.org/abs/2609.11115"><img src="https://img.shields.io/badge/arXiv-Paper-red?style=for-the-badge&logo=arxiv" alt="arXiv"></a>
+<a href="https://huggingface.co/papers/2609.11115"><img src="https://img.shields.io/badge/Hugging%20Face-%232%20Paper%20of%20the%20Day%20%E2%80%A2%20Upvote%20us-FFD21E?style=for-the-badge&amp;logo=huggingface&amp;logoColor=000" alt="Hugging Face: #2 Paper of the Day — upvote us"></a>
+
 The manuscript, PDF, figures, and Overleaf instructions live in
 **[benchmark-radar-paper](https://github.com/ktwu01/benchmark-radar-paper)**,
 mounted here as the `latex/` Git submodule.
